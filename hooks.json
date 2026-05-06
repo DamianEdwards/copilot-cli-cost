@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/hooks/record-event.js sessionStart",
+        "powershell": "node ./scripts/hooks/record-event.js sessionStart",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/hooks/record-event.js userPromptSubmitted",
+        "powershell": "node ./scripts/hooks/record-event.js userPromptSubmitted",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/hooks/record-event.js agentStop",
+        "powershell": "node ./scripts/hooks/record-event.js agentStop",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/hooks/record-event.js subagentStop",
+        "powershell": "node ./scripts/hooks/record-event.js subagentStop",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/hooks/record-event.js sessionEnd",
+        "powershell": "node ./scripts/hooks/record-event.js sessionEnd",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
+

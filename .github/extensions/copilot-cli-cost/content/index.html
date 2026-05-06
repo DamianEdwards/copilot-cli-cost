@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Copilot Cost</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/__bridge.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Copilot CLI</p>
+        <h1>Session cost</h1>
+      </div>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+
+    <section class="panel controls">
+      <label for="plan">What-if subscription</label>
+      <select id="plan">
+        <option value="pro">Copilot Pro</option>
+        <option value="pro-plus">Copilot Pro+</option>
+        <option value="business">Copilot Business</option>
+        <option value="enterprise">Copilot Enterprise</option>
+        <option value="free">Copilot Free</option>
+        <option value="student">Copilot Student</option>
+      </select>
+      <p id="current-plan" class="hint">Current subscription: detecting...</p>
+      <p id="what-if-note" class="hint full-width">Recalculates allowances for the selected plan. Token usage and model are kept as observed.</p>
+    </section>
+
+    <section id="status" class="status">Loading live cost data...</section>
+
+    <section class="notice">
+      Usage-based billing is a forward-looking estimate until GitHub's transition takes effect.
+      <a href="https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing" target="_blank" rel="noreferrer">See GitHub's model pricing docs</a>.
+    </section>
+
+    <section class="cards">
+      <article class="card">
+        <p class="label">Usage-based</p>
+        <p id="usage-total" class="value">-</p>
+        <p id="usage-subtitle" class="subtitle">-</p>
+      </article>
+      <article class="card">
+        <p class="label">Premium requests</p>
+        <p id="pru-total" class="value">-</p>
+        <p id="pru-subtitle" class="subtitle">-</p>
+      </article>
+      <article class="card">
+        <p class="label">Session</p>
+        <p id="session-id" class="value small">-</p>
+        <p id="source" class="subtitle">-</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Token bucket breakdown</h2>
+      <div id="breakdown" class="breakdown"></div>
+    </section>
+
+    <details class="panel">
+      <summary>Raw data</summary>
+      <pre id="raw"></pre>
+    </details>
+  </main>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

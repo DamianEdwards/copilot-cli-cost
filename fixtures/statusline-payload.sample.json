@@ -1,0 +1,37 @@
+{
+  "cwd": "D:\\TEST",
+  "session_id": "statusline-sample-session",
+  "session_name": "Estimate live session cost",
+  "version": "1.0.43-0",
+  "model": {
+    "id": "gpt-5.5",
+    "display_name": "GPT-5.5"
+  },
+  "workspace": {
+    "current_dir": "D:\\TEST"
+  },
+  "cost": {
+    "total_api_duration_ms": 123456,
+    "total_duration_ms": 3241747,
+    "total_lines_added": 100,
+    "total_lines_removed": 50,
+    "total_premium_requests": 7.5
+  },
+  "context_window": {
+    "total_input_tokens": 135659,
+    "total_output_tokens": 1333,
+    "total_cache_read_tokens": 91648,
+    "total_cache_write_tokens": 12000,
+    "total_reasoning_tokens": 335,
+    "context_window_size": 400000,
+    "used_percentage": 22,
+    "last_call_input_tokens": 42000,
+    "last_call_output_tokens": 3000,
+    "current_usage": {
+      "input_tokens": 42000,
+      "output_tokens": 3000,
+      "cache_creation_input_tokens": 12000,
+      "cache_read_input_tokens": 85000
+    }
+  }
+}

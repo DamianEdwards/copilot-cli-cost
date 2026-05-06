@@ -1,0 +1,26 @@
+{
+  "sessionId": "sample-session-001",
+  "plan": "pro",
+  "currency": "USD",
+  "startedAt": "2026-05-06T18:00:00.000Z",
+  "endedAt": "2026-05-06T18:35:00.000Z",
+  "modelUsage": [
+    {
+      "model": "gpt-5.5",
+      "requests": 3,
+      "inputTokens": 180000,
+      "cachedInputTokens": 420000,
+      "cacheWriteTokens": 0,
+      "outputTokens": 36000
+    },
+    {
+      "model": "claude-sonnet-4.6",
+      "requests": 2,
+      "inputTokens": 90000,
+      "cachedInputTokens": 120000,
+      "cacheWriteTokens": 60000,
+      "outputTokens": 24000
+    }
+  ]
+}
+
