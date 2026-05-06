@@ -36,6 +36,7 @@ elements.plan.addEventListener("change", () => {
   selectedPlan = elements.plan.value;
   refresh();
 });
+document.addEventListener("click", openExternalLink);
 setInterval(refresh, 2000);
 refresh();
 
@@ -88,6 +89,21 @@ function render(data) {
 
   renderBreakdown(usageBased);
   elements.raw.textContent = JSON.stringify(data, null, 2);
+}
+
+async function openExternalLink(event) {
+  const link = event.target.closest("a[data-external]");
+  if (!link) {
+    return;
+  }
+
+  event.preventDefault();
+  try {
+    await copilot.openExternal(link.href);
+  } catch (error) {
+    elements.status.textContent = `Unable to open link: ${error.message}`;
+    elements.status.className = "status error";
+  }
 }
 
 function inferCurrentSubscription(data) {

@@ -1,4 +1,5 @@
 import { joinSession } from "@github/copilot-sdk/extension";
+import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
@@ -14,7 +15,8 @@ let currentSubscriptionPromise;
 const webview = new CopilotWebview({
   callbacks: {
     getCostData: (options) => getPanelData(options),
-    log: (message, options) => session?.log(String(message), options)
+    log: (message, options) => session?.log(String(message), options),
+    openExternal: (url) => openExternal(url)
   },
   contentDir: join(import.meta.dirname, "content"),
   extensionName: "copilot_cost",
@@ -68,6 +70,11 @@ async function handleCostCommand(context) {
   const tokens = tokenize(context.args);
   const [verb, subject] = tokens;
 
+  if (verb === "help" || verb === "-h" || verb === "--help") {
+    await session.log(formatCostHelp());
+    return;
+  }
+
   if (verb === "panel") {
     await handlePanelCommand(subject, tokens.slice(2));
     return;
@@ -102,6 +109,20 @@ async function handlePanelCommand(action = "on") {
   }
 
   await session.log("Usage: /cost panel on|off|refresh", { level: "warning" });
+}
+
+function formatCostHelp() {
+  return [
+    "Copilot Cost usage",
+    "",
+    "/cost",
+    "/cost panel on|off|refresh",
+    "/cost session <session-id>",
+    "/cost live-session <session-id>",
+    "/cost --plan pro|pro-plus|business|enterprise",
+    "/cost --billing-model usage-based|premium-requests",
+    "/cost --currency USD"
+  ].join("\n");
 }
 
 function parseCostArgs(tokens) {
@@ -249,6 +270,29 @@ function mapCopilotPlan(plan) {
     return "pro";
   }
   return normalized;
+}
+
+function openExternal(url) {
+  const target = new URL(String(url));
+  if (target.protocol !== "https:" && target.protocol !== "http:") {
+    throw new Error(`Unsupported external URL protocol: ${target.protocol}`);
+  }
+
+  const href = target.href;
+  if (process.platform === "win32") {
+    spawn("cmd", ["/c", "start", "", href], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    }).unref();
+    return;
+  }
+
+  const command = process.platform === "darwin" ? "open" : "xdg-open";
+  spawn(command, [href], {
+    detached: true,
+    stdio: "ignore"
+  }).unref();
 }
 
 async function readUsage({ sessionId, source }) {
