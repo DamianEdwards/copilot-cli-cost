@@ -1,6 +1,6 @@
 # Copilot CLI Cost
 
-Copilot CLI Cost adds deterministic session-cost reporting to GitHub Copilot CLI.
+Copilot CLI Cost adds estimated session-cost reporting to GitHub Copilot CLI.
 
 It estimates costs across both Copilot billing models:
 
@@ -24,19 +24,21 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 ## Install
 
-Install the plugin from GitHub:
+### 1. Install the plugin from GitHub
 
-```powershell
+Run the following in your shell to install the plugin from the GitHub repository:
+
+```shell
 copilot plugin install DamianEdwards/copilot-cli-cost
 ```
 
 Verify that the plugin is installed:
 
-```powershell
+```shell
 copilot plugin list
 ```
 
-### Enable the deterministic `/cost` command and panel
+### 2. Enable the deterministic `/cost` command and panel
 
 The plugin install puts the package on disk and makes plugin components such as skills available. The `/cost` command and panel are implemented as a Copilot CLI SDK extension, and SDK extensions are discovered from `.github/extensions/` in a repository or from the user extensions folder.
 
@@ -48,7 +50,9 @@ Use the copilot-cost-install skill to enable the Copilot Cost /cost command.
 
 The skill installs a small user-scoped delegate that imports the SDK extension from the plugin install location.
 
-Manual PowerShell fallback:
+If you do not want to use the setup skill, paste and run one of these fallback snippets in your terminal after `copilot plugin install` completes. Do not copy these snippets into your repository.
+
+PowerShell terminal:
 
 ```powershell
 $installer = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Directory -Recurse |
@@ -62,7 +66,7 @@ if (-not $installer) {
 node (Join-Path $installer "scripts\install-extension-shim.mjs")
 ```
 
-Manual Bash fallback:
+Bash terminal:
 
 ```bash
 installer="$(find "$HOME/.copilot/installed-plugins" -type f -path '*/scripts/install-extension-shim.mjs' | head -n 1)"
