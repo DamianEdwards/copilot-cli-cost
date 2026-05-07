@@ -42,8 +42,8 @@ test("calculates usage-based billing from token buckets", () => {
     currency: "USD"
   });
 
-  assert.equal(result.totalUsd, 57.55);
-  assert.equal(result.aiCredits, 5755);
+  assert.equal(result.totalUsd, 49.55);
+  assert.equal(result.aiCredits, 4955);
   assert.equal(result.includedAiCredits, 1000);
   assert.equal(result.modelBreakdown.length, 2);
   assert.deepEqual(result.modelBreakdown[0].rates, {
@@ -53,9 +53,35 @@ test("calculates usage-based billing from token buckets", () => {
     outputPerMillionUsd: 30,
     reasoningPerMillionUsd: 30
   });
-  assert.equal(result.modelBreakdown[0].inputUsd, 5);
+  assert.equal(result.modelBreakdown[0].uncachedInputTokens, 0);
+  assert.equal(result.modelBreakdown[0].inputUsd, 0);
   assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.5);
   assert.equal(result.modelBreakdown[0].outputUsd, 30);
+});
+
+test("calculates usage-based input billing from uncached input tokens", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "uncached-input-session",
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          inputTokens: 1_000_000,
+          cachedInputTokens: 400_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.modelBreakdown[0].inputTokens, 1_000_000);
+  assert.equal(result.modelBreakdown[0].uncachedInputTokens, 600_000);
+  assert.equal(result.modelBreakdown[0].inputUsd, 3);
+  assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.2);
+  assert.equal(result.totalUsd, 3.2);
 });
 
 test("calculates zero usage when model usage is not available yet", () => {
@@ -138,7 +164,7 @@ test("supports non-USD display currency with explicit exchange rate", () => {
   });
 
   assert.equal(result.currency.code, "EUR");
-  assert.equal(result.displayTotal, 51.795);
+  assert.equal(result.displayTotal, 44.595);
 });
 
 test("carries exchange-rate metadata into calculation output", () => {
@@ -357,7 +383,9 @@ test("calculates usage-based billing from Copilot CLI event metrics", () => {
     plan: "pro"
   });
 
-  assert.equal(result.totalUsd, 0.774159);
+  assert.equal(result.totalUsd, 0.315919);
+  assert.equal(result.modelBreakdown[0].uncachedInputTokens, 44011);
+  assert.equal(result.modelBreakdown[0].inputUsd, 0.220055);
   assert.equal(result.modelBreakdown[0].reasoningUsd, 0.01005);
 });
 
@@ -473,7 +501,7 @@ test("statusline CLI enriches passthrough payload by default", () => {
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "base gpt-5.5 77.4159 credits 7.5 PRU");
+    assert.equal(result.stdout, "base gpt-5.5 31.5919 credits 7.5 PRU");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -512,7 +540,7 @@ test("statusline CLI can decorate passthrough statusline output", () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^base gpt-5\.5 · 💸 Cost /);
-    assert.match(result.stdout, /~\$0\.7742 \(77\.4 cr\)/);
+    assert.match(result.stdout, /~\$0\.3159 \(31\.6 cr\)/);
     assert.match(result.stdout, /7\.5 PRU/);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });

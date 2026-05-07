@@ -188,31 +188,34 @@ function renderBreakdown(usageBased) {
   }
 
   const currency = usageBased.currency ?? { code: "USD", exchangeRate: 1 };
-  elements.breakdown.innerHTML = usageBased.modelBreakdown.map((item) => `
-    <div class="model-card">
-      <div class="model-card-header">
-        <strong>${escapeHtml(item.model)}</strong>
-        <span>${formatCurrency(item.displayTotal, currency.code)} · ${formatNumber(item.aiCredits, 1)} credits</span>
+  elements.breakdown.innerHTML = usageBased.modelBreakdown.map((item) => {
+    const uncachedInputTokens = item.uncachedInputTokens ?? Math.max(Number(item.inputTokens ?? 0) - Number(item.cachedInputTokens ?? 0), 0);
+    return `
+      <div class="model-card">
+        <div class="model-card-header">
+          <strong>${escapeHtml(item.model)}</strong>
+          <span>${formatCurrency(item.displayTotal, currency.code)} · ${formatNumber(item.aiCredits, 1)} credits</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Bucket</th>
+              <th>Tokens</th>
+              <th>Rate / 1M (${escapeHtml(currency.code)})</th>
+              <th>Cost (${escapeHtml(currency.code)})</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderBucket("Uncached input", uncachedInputTokens, item.rates?.inputPerMillionUsd, item.inputUsd, currency)}
+            ${renderBucket("Cached input", item.cachedInputTokens, item.rates?.cachedInputPerMillionUsd, item.cachedInputUsd, currency)}
+            ${renderBucket("Cache write", item.cacheWriteTokens, item.rates?.cacheWritePerMillionUsd, item.cacheWriteUsd, currency)}
+            ${renderBucket("Output", item.outputTokens, item.rates?.outputPerMillionUsd, item.outputUsd, currency)}
+            ${renderBucket("Reasoning", item.reasoningTokens, item.rates?.reasoningPerMillionUsd, item.reasoningUsd, currency)}
+          </tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Bucket</th>
-            <th>Tokens</th>
-            <th>Rate / 1M (${escapeHtml(currency.code)})</th>
-            <th>Cost (${escapeHtml(currency.code)})</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderBucket("Input", item.inputTokens, item.rates?.inputPerMillionUsd, item.inputUsd, currency)}
-          ${renderBucket("Cached input", item.cachedInputTokens, item.rates?.cachedInputPerMillionUsd, item.cachedInputUsd, currency)}
-          ${renderBucket("Cache write", item.cacheWriteTokens, item.rates?.cacheWritePerMillionUsd, item.cacheWriteUsd, currency)}
-          ${renderBucket("Output", item.outputTokens, item.rates?.outputPerMillionUsd, item.outputUsd, currency)}
-          ${renderBucket("Reasoning", item.reasoningTokens, item.rates?.reasoningPerMillionUsd, item.reasoningUsd, currency)}
-        </tbody>
-      </table>
-    </div>
-  `).join("");
+    `;
+  }).join("");
 }
 
 function renderBucket(label, tokens, rate, cost, currency) {

@@ -33,7 +33,8 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
       throw new Error(`No usage-based token rate configured for model '${usage.model}' (${modelId}).`);
     }
 
-    const inputUsd = costForTokens(usage.inputTokens, rate.inputPerMillionUsd);
+    const uncachedInputTokens = getUncachedInputTokens(usage.inputTokens, usage.cachedInputTokens);
+    const inputUsd = costForTokens(uncachedInputTokens, rate.inputPerMillionUsd);
     const cachedInputUsd = costForTokens(usage.cachedInputTokens, rate.cachedInputPerMillionUsd);
     const cacheWriteUsd = costForTokens(usage.cacheWriteTokens, rate.cacheWritePerMillionUsd);
     const outputUsd = costForTokens(usage.outputTokens, rate.outputPerMillionUsd);
@@ -47,6 +48,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
       displayName: usage.model,
       requests: usage.requests,
       inputTokens: usage.inputTokens,
+      uncachedInputTokens,
       cachedInputTokens: usage.cachedInputTokens,
       cacheWriteTokens: usage.cacheWriteTokens,
       outputTokens: usage.outputTokens,
@@ -234,6 +236,10 @@ function getIncludedAiCredits(plan, scenario) {
 
 function costForTokens(tokens, perMillionUsd) {
   return roundCost((numberOrZero(tokens) / TOKENS_PER_MILLION) * perMillionUsd);
+}
+
+function getUncachedInputTokens(inputTokens, cachedInputTokens) {
+  return Math.max(numberOrZero(inputTokens) - numberOrZero(cachedInputTokens), 0);
 }
 
 function usdToAiCredits(usd) {

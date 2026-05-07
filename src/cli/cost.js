@@ -235,7 +235,8 @@ function printHuman(result) {
     console.log("");
     console.log("Model breakdown:");
     for (const item of result.modelBreakdown) {
-      console.log(`- ${item.model}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${item.inputTokens} input, ${item.cachedInputTokens} cached, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
+      const uncachedInputTokens = item.uncachedInputTokens ?? Math.max(Number(item.inputTokens ?? 0) - Number(item.cachedInputTokens ?? 0), 0);
+      console.log(`- ${item.model}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${uncachedInputTokens} uncached input, ${item.cachedInputTokens} cached input, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
     }
     return;
   }

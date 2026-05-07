@@ -8,7 +8,7 @@
     {
       "model": "gpt-5.5",
       "requests": 3,
-      "inputTokens": 180000,
+      "inputTokens": 600000,
       "cachedInputTokens": 420000,
       "cacheWriteTokens": 0,
       "outputTokens": 36000
@@ -16,7 +16,7 @@
     {
       "model": "claude-sonnet-4.6",
       "requests": 2,
-      "inputTokens": 90000,
+      "inputTokens": 210000,
       "cachedInputTokens": 120000,
       "cacheWriteTokens": 60000,
       "outputTokens": 24000

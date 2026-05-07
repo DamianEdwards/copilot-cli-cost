@@ -208,7 +208,7 @@ macOS/Linux:
 Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
 
 ```text
-💸 Cost ~$0.7742 (77.4 cr) · 7.5 PRU · last 42K in/3K out
+💸 Cost ~$0.3159 (31.6 cr) · 7.5 PRU · last 42K in/3K out
 ```
 
 ### Use another statusline
@@ -235,11 +235,11 @@ The enriched payload includes:
 {
   "copilot_cost": {
     "schema_version": 1,
-    "status_line": "💸 Cost ~$0.7742 (77.4 cr) · 7.5 PRU · last 42K in/3K out",
+    "status_line": "💸 Cost ~$0.3159 (31.6 cr) · 7.5 PRU · last 42K in/3K out",
     "usage_based": {
       "billingModel": "usage-based",
-      "totalUsd": 0.774159,
-      "aiCredits": 77.4159
+      "totalUsd": 0.315919,
+      "aiCredits": 31.5919
     },
     "premium_requests": {
       "billingModel": "premium-requests",
@@ -353,7 +353,7 @@ Usage JSON shape:
     {
       "model": "gpt-5.5",
       "requests": 3,
-      "inputTokens": 180000,
+      "inputTokens": 600000,
       "cachedInputTokens": 420000,
       "cacheWriteTokens": 0,
       "outputTokens": 36000,
@@ -365,15 +365,16 @@ Usage JSON shape:
 
 ## How estimates are calculated
 
-Usage-based billing uses published per-1M-token rates:
+Usage-based billing uses published per-1M-token rates. `inputTokens` is the total input token count from Copilot metrics, and `cachedInputTokens` is the cached subset, so only uncached input tokens use the regular input rate:
 
 ```text
-inputUsd       = inputTokens       / 1,000,000 * inputPerMillionUsd
-cachedInputUsd = cachedInputTokens / 1,000,000 * cachedInputPerMillionUsd
-cacheWriteUsd  = cacheWriteTokens  / 1,000,000 * cacheWritePerMillionUsd
-outputUsd      = outputTokens      / 1,000,000 * outputPerMillionUsd
-reasoningUsd   = reasoningTokens   / 1,000,000 * outputPerMillionUsd
-aiCredits      = totalUsd / 0.01
+uncachedInputTokens = max(inputTokens - cachedInputTokens, 0)
+inputUsd            = uncachedInputTokens / 1,000,000 * inputPerMillionUsd
+cachedInputUsd      = cachedInputTokens   / 1,000,000 * cachedInputPerMillionUsd
+cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
+outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
+reasoningUsd        = reasoningTokens     / 1,000,000 * outputPerMillionUsd
+aiCredits           = totalUsd / 0.01
 ```
 
 Premium-request billing uses Copilot-reported premium request units when present. If only model request counts are available, it applies the configured model multiplier table.

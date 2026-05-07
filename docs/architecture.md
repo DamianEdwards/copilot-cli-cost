@@ -33,7 +33,7 @@ Canonical usage input:
     {
       "model": "gpt-5.5",
       "requests": 1,
-      "inputTokens": 1000,
+      "inputTokens": 3000,
       "cachedInputTokens": 2000,
       "cacheWriteTokens": 0,
       "outputTokens": 500
@@ -72,10 +72,10 @@ This is useful for `/usage` or `/session info` output because those commands rep
 ### Usage-based billing
 
 ```text
-inputTokens        * model.inputPerMillionUsd
-cachedInputTokens  * model.cachedInputPerMillionUsd
-cacheWriteTokens   * model.cacheWritePerMillionUsd
-outputTokens       * model.outputPerMillionUsd
+max(inputTokens - cachedInputTokens, 0) * model.inputPerMillionUsd
+cachedInputTokens                    * model.cachedInputPerMillionUsd
+cacheWriteTokens                     * model.cacheWritePerMillionUsd
+outputTokens                         * model.outputPerMillionUsd
 ```
 
 All token costs are divided by 1,000,000. AI Credits are then:
@@ -87,11 +87,12 @@ usd / 0.01
 The model breakdown keeps every token bucket separate so UI surfaces can show the exact subtotal:
 
 ```text
-inputUsd       = inputTokens       / 1,000,000 * inputPerMillionUsd
-cachedInputUsd = cachedInputTokens / 1,000,000 * cachedInputPerMillionUsd
-cacheWriteUsd  = cacheWriteTokens  / 1,000,000 * cacheWritePerMillionUsd
-outputUsd      = outputTokens      / 1,000,000 * outputPerMillionUsd
-reasoningUsd   = reasoningTokens   / 1,000,000 * outputPerMillionUsd
+uncachedInputTokens = max(inputTokens - cachedInputTokens, 0)
+inputUsd            = uncachedInputTokens / 1,000,000 * inputPerMillionUsd
+cachedInputUsd      = cachedInputTokens   / 1,000,000 * cachedInputPerMillionUsd
+cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
+outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
+reasoningUsd        = reasoningTokens     / 1,000,000 * outputPerMillionUsd
 ```
 
 Reasoning tokens are currently treated as output-priced unless `billReasoningTokens` is disabled. This should be revisited if GitHub documents a separate reasoning-token rate.
