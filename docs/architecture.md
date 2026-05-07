@@ -2,7 +2,7 @@
 
 ## Goal
 
-Show Copilot CLI session cost on demand and eventually in live UI surfaces:
+Show Copilot CLI session cost on demand and in live UI surfaces:
 
 - `/cost`
 - `/cost session <session-id>`
@@ -105,18 +105,28 @@ The estimate is intended to be explainable and reconcilable, not an invoice:
 - Anthropic cache write charges are modeled separately because GitHub documents a cache-write rate for those models.
 - Premium request calculations prefer Copilot's already-multiplied PRU total when present, avoiding double-applying local multiplier assumptions.
 - Business and Enterprise AI Credit allowances are pooled at the billing entity level, so the session estimate does not necessarily represent incremental billable spend.
-- USD is canonical; non-USD values are display estimates based on the configured exchange-rate snapshot.
+- USD is canonical; non-USD values are display estimates based on a cached Frankfurter exchange-rate snapshot or an explicit exchange-rate override.
 - Published rates, plan allowances, and transition dates can change, so `src/core/rates.js` should be periodically checked against GitHub's billing docs.
 
 ## Currency
 
-USD remains canonical. Other currencies are display-only estimates using a configured USD-to-currency exchange rate.
+USD remains canonical. Other currencies are display-only estimates using a USD-to-currency exchange rate.
+
+The SDK extension and standalone calculator resolve non-USD rates in this order:
+
+1. Explicit CLI option, when available.
+2. `COPILOT_COST_FX_<CODE>` environment variable.
+3. `COPILOT_COST_EXCHANGE_RATE` environment variable.
+4. Cached Frankfurter USD-to-currency rate.
+5. Fresh Frankfurter USD-to-currency rate, cached under `%LOCALAPPDATA%\copilot-cli-cost\fx-rates`.
+
+If a cached rate is expired and Frankfurter is unavailable, the resolver returns the stale cache entry with `source: "frankfurter-cache-stale"` so the UI can still label the estimate accurately.
 
 This avoids mixing GitHub's USD rate table with local tax, billing currency, regional pricing, or exchange-rate timing concerns.
 
 ## Copilot CLI integration
 
-Current documented plugin surfaces:
+Documented plugin surfaces:
 
 - `plugin.json` for plugin metadata
 - `skills/` for agent instructions
@@ -124,7 +134,7 @@ Current documented plugin surfaces:
 - marketplace metadata in `.github/plugin/marketplace.json`
 - `.github/extensions/copilot-cli-cost` for deterministic SDK commands, tools, and the webview panel
 
-Current documented hooks expose lifecycle events but not per-model token usage. The hook recorder in this repo captures events for correlation, but actual/reconciled costs require one of:
+Documented hooks expose lifecycle events but not per-model token usage. The hook recorder in this repo captures events for correlation, but actual/reconciled costs require one of:
 
 - the Copilot SDK session RPC API, `session.rpc.usage.getMetrics()`, for the current live session
 - local Copilot CLI session events with `modelMetrics` in `~/.copilot/session-state/<session-id>/events.jsonl`
@@ -135,7 +145,7 @@ Current documented hooks expose lifecycle events but not per-model token usage. 
 
 The Copilot usage metrics REST API is not the primary source for session-level cost. It returns daily or 28-day organization/enterprise reports via download links and is useful for reconciliation, but it does not expose a documented `sessionId` filter or a live per-session endpoint.
 
-Completed sessions currently include counters in `session.shutdown`, including `totalPremiumRequests` and per-model token buckets under `modelMetrics`. That is enough to calculate actual completed-session cost.
+Completed sessions include counters in `session.shutdown`, including `totalPremiumRequests` and per-model token buckets under `modelMetrics`. That is enough to calculate actual completed-session cost.
 
 Active sessions should use the deterministic SDK extension first. It calls `session.rpc.usage.getMetrics()` and normalizes the result via `src/core/usage-metrics.js`. The RPC result includes:
 

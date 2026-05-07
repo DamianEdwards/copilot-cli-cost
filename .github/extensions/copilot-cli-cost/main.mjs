@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
+import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
 import { readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
 import { readSessionUsageFromEvents } from "../../../src/core/session-events.js";
 import { usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
@@ -179,10 +180,12 @@ async function getCostData({
   const sessionUsage = await readUsage({ sessionId, source });
   const currentSubscription = await getCurrentSubscription();
   const resolvedPlan = plan ?? currentSubscription.plan ?? process.env.COPILOT_COST_PLAN ?? "pro";
+  const exchangeRate = await resolveExchangeRate(currency);
   const scenario = {
     billingModel,
     currency,
-    exchangeRates: readExchangeRates(currency),
+    exchangeRateMetadata: exchangeRate.metadata,
+    exchangeRates: exchangeRate.exchangeRates,
     plan: resolvedPlan,
     promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true"
   };
@@ -199,6 +202,7 @@ async function getCostData({
   return {
     generatedAt: new Date().toISOString(),
     currentSubscription,
+    exchangeRate: exchangeRate.rateInfo,
     repoRoot,
     requestedBillingModel: billingModel,
     sessionUsage,
@@ -374,9 +378,43 @@ function formatCostCommandOutput(data) {
   return lines.join("\n");
 }
 
-function readExchangeRates(currency) {
-  const rate = readOptionalNumber(process.env.COPILOT_COST_EXCHANGE_RATE);
-  return rate === undefined ? undefined : { [String(currency).toUpperCase()]: rate };
+async function resolveExchangeRate(currency) {
+  const code = String(currency ?? "USD").toUpperCase();
+  if (code === "USD") {
+    return {
+      exchangeRates: undefined,
+      metadata: undefined,
+      rateInfo: {
+        base: "USD",
+        quote: "USD",
+        rate: 1,
+        source: "native-usd"
+      }
+    };
+  }
+
+  const envRateName = `COPILOT_COST_FX_${code}`;
+  const rate = readOptionalNumber(process.env[envRateName] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
+  if (rate !== undefined) {
+    const rateInfo = {
+      base: "USD",
+      quote: code,
+      rate,
+      source: process.env[envRateName] ? envRateName : "COPILOT_COST_EXCHANGE_RATE"
+    };
+    return {
+      exchangeRates: { [code]: rate },
+      metadata: { [code]: rateInfo },
+      rateInfo
+    };
+  }
+
+  const rateInfo = await getUsdExchangeRate(code);
+  return {
+    exchangeRates: { [code]: rateInfo.rate },
+    metadata: { [code]: rateInfo },
+    rateInfo
+  };
 }
 
 function readOptionalNumber(value) {

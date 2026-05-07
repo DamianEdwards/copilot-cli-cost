@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { calculateSessionCost } from "../core/calculate.js";
 import { formatMoney } from "../core/currency.js";
+import { getUsdExchangeRate } from "../core/fx-rates.js";
 import { readLatestLiveSession, readLiveSession } from "../core/live-session-store.js";
 import { readSessionUsageFromEvents } from "../core/session-events.js";
 import { parseStatusLinePayload, statusLinePayloadToSessionUsage } from "../core/statusline-payload.js";
@@ -13,7 +14,7 @@ const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 
 main();
 
-function main() {
+async function main() {
   try {
     const args = parseArgs(process.argv.slice(2));
     if (args.help) {
@@ -22,6 +23,7 @@ function main() {
     }
 
     const sessionUsage = readUsage(args);
+    const exchangeRate = await resolveExchangeRate(args);
     const result = calculateSessionCost(sessionUsage, {
       billingModel: args.billingModel,
       plan: args.plan,
@@ -31,9 +33,8 @@ function main() {
       currency: args.currency,
       promotionalAllowance: args.promotionalAllowance,
       billReasoningTokens: args.billReasoningTokens,
-      exchangeRates: args.exchangeRate
-        ? { [String(args.currency ?? "USD").toUpperCase()]: Number(args.exchangeRate) }
-        : undefined
+      exchangeRateMetadata: exchangeRate.metadata,
+      exchangeRates: exchangeRate.exchangeRates
     });
 
     if (args.json) {
@@ -46,6 +47,59 @@ function main() {
     console.error(`copilot-cost: ${error.message}`);
     process.exitCode = 1;
   }
+}
+
+async function resolveExchangeRate(args) {
+  const code = String(args.currency ?? "USD").toUpperCase();
+  if (code === "USD") {
+    return {};
+  }
+
+  if (args.exchangeRate) {
+    const rate = Number(args.exchangeRate);
+    const rateInfo = {
+      base: "USD",
+      quote: code,
+      rate,
+      source: "configured"
+    };
+    return {
+      exchangeRates: { [code]: rate },
+      metadata: { [code]: rateInfo }
+    };
+  }
+
+  const envRateName = `COPILOT_COST_FX_${code}`;
+  const envRate = readOptionalNumber(process.env[envRateName] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
+  if (envRate !== undefined) {
+    const rateInfo = {
+      base: "USD",
+      quote: code,
+      rate: envRate,
+      source: process.env[envRateName] ? envRateName : "COPILOT_COST_EXCHANGE_RATE"
+    };
+    return {
+      exchangeRates: { [code]: envRate },
+      metadata: { [code]: rateInfo }
+    };
+  }
+
+  const rateInfo = await getUsdExchangeRate(code);
+  return {
+    exchangeRates: { [code]: rateInfo.rate },
+    metadata: { [code]: rateInfo }
+  };
+}
+
+function readOptionalNumber(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function parseArgs(argv) {
@@ -227,7 +281,7 @@ Options:
   --session-id <id>                Session id to include in output
   --no-bill-reasoning-tokens       Do not include reasoning tokens as output-token cost
   --currency <code>                Display currency, default USD
-  --exchange-rate <rate>           USD-to-currency exchange rate for non-USD display
+  --exchange-rate <rate>           USD-to-currency exchange rate override for non-USD display
   --multiplier-set <set>           current | annual-after-2026-06-01
   --promotional-allowance          Use Business/Enterprise promotional UBB allowance
   --json                           Print machine-readable JSON

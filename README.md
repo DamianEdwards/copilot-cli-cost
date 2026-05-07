@@ -1,115 +1,143 @@
 # Copilot CLI Cost
 
-Copilot CLI Cost is a GitHub Copilot CLI plugin scaffold for showing session cost across both Copilot billing models:
+Copilot CLI Cost adds deterministic session-cost reporting to GitHub Copilot CLI.
 
-- Premium request units (the current request/multiplier model)
+It estimates costs across both Copilot billing models:
+
+- Premium request units
 - Usage-based billing with GitHub AI Credits
 
-The calculator stores canonical cost in USD and converts to a selected display currency with an explicit exchange-rate snapshot.
+The calculator stores canonical cost in USD and converts to a selected display currency with cached exchange rates from Frankfurter or an explicit exchange-rate override.
 
 ![Copilot Cost panel showing session estimates and token bucket breakdown](docs/session-cost-panel.png)
 
-## Current status
+## Features
 
-This repository is intentionally split into three parts:
+- `/cost` command for active-session estimates
+- `/cost session <session-id>` for completed local sessions
+- Native cost panel with token bucket breakdowns
+- What-if subscription comparison for Copilot Free, Pro, Pro+, Business, Enterprise, and Student
+- Display currency selector backed by cached Frankfurter USD exchange rates
+- Statusline cost segment with optional passthrough to another statusline
+- Standalone calculator CLI for sample data, JSON files, completed session events, and live snapshots
+- USD-first cost model with optional display currency conversion
 
-1. A working standalone calculator in `src/` that accepts session usage JSON and computes costs.
-2. A Copilot CLI statusline bridge that reads Copilot CLI's live statusline payload, caches the latest session counters, and prints a compact cost segment.
-3. A deterministic Copilot CLI SDK extension under `.github/extensions/copilot-cli-cost` that registers `/cost`, cost tools, and a native cost panel.
-4. A Copilot CLI plugin layout (`plugin.json`, `skills/`) for marketplace install/discovery.
+## Install
 
-The deterministic SDK extension now prefers Copilot CLI's live `session.rpc.usage.getMetrics()` API. The statusline bridge is still useful as a composable statusline decorator and fallback live cache.
-
-## Repository layout
-
-```text
-.
-├── .github/plugin/marketplace.json  # Marketplace metadata for plugin discovery
-├── .github/extensions/copilot-cli-cost
-│   ├── extension.mjs                # Deterministic SDK extension entrypoint
-│   ├── main.mjs                     # /cost command, tools, and panel callbacks
-│   └── content/                     # Native webview panel UI
-├── docs/architecture.md             # Design notes and integration seams
-├── fixtures/session-usage.sample.json
-├── hooks.json                       # Legacy hook recorder sample, not registered by plugin.json
-├── plugin.json                      # Copilot CLI plugin manifest
-├── scripts/hooks/record-event.js    # Hook event recorder
-├── scripts/statusline.cmd           # Windows statusline bridge entrypoint
-├── skills/copilot-cost/SKILL.md     # Cost-estimation skill instructions
-├── src/cli/cost.js                  # Standalone calculator CLI
-├── src/cli/statusline.js            # Statusline payload reader/cache/writer
-├── src/core/                        # Billing, currency, and rate logic
-└── test/                            # Node test suite
-```
-
-## Try the calculator
+Install the plugin from GitHub:
 
 ```powershell
-cd D:\src\GitHub\DamianEdwards\copilot-cli-cost
-npm test
-npm run cost -- --sample
-npm run cost -- --sample --billing-model premium-requests --plan pro-plus
-npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
-npm run cost -- --session aba582fa-1b08-472e-a69b-54228d95803b --plan pro
-npm run cost -- --session aba582fa-1b08-472e-a69b-54228d95803b --billing-model premium-requests --plan pro
-npm run cost -- --statusline-payload .\fixtures\statusline-payload.sample.json --plan pro
-npm run cost -- --premium-requests 12.5 --plan pro --currency EUR --exchange-rate 0.9
-npm run cost -- --sample --currency EUR --exchange-rate 0.9
+copilot plugin install DamianEdwards/copilot-cli-cost
 ```
 
-## Install the plugin locally
+Verify that the plugin is installed:
 
 ```powershell
-cd D:\src\GitHub\DamianEdwards\copilot-cli-cost
-copilot plugin marketplace add D:\src\GitHub\DamianEdwards\copilot-cli-cost
-copilot plugin install copilot-cli-cost@copilot-cli-cost-marketplace
 copilot plugin list
 ```
 
-Copilot CLI 1.0.43 does not accept direct local paths for `copilot plugin install`, even though some docs mention local path installs. Local development works by registering this repository as a local marketplace first.
+### Enable the deterministic `/cost` command and panel
 
-Inside Copilot CLI, check that the skill is visible:
+Copilot CLI SDK extensions are loaded from user and project extension folders. The plugin installer stores this repository under Copilot's installed plugin directory, so register the SDK extension with a small user-scoped delegate:
 
-```text
-/skills list
-```
+```powershell
+$pluginRoot = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Directory -Recurse |
+  Where-Object { Test-Path (Join-Path $_.FullName ".github\extensions\copilot-cli-cost\extension.mjs") } |
+  Select-Object -First 1 -ExpandProperty FullName
 
-The deterministic SDK extension registers `/cost` directly when Copilot CLI discovers `.github/extensions/copilot-cli-cost` from this repository or from your user extensions directory. It reads live session metrics from the Copilot SDK RPC API and falls back to the statusline cache if RPC metrics are unavailable.
+if (-not $pluginRoot) {
+  throw "Could not find installed copilot-cli-cost plugin."
+}
 
-For global local development, create `~\.copilot\extensions\copilot-cli-cost\extension.mjs` that delegates to this repository:
+$extensionRoot = "$env:USERPROFILE\.copilot\extensions\copilot-cli-cost"
+New-Item -ItemType Directory -Force $extensionRoot | Out-Null
 
-```js
+$sourceExtension = Join-Path $pluginRoot ".github\extensions\copilot-cli-cost\extension.mjs"
+$escapedSourceExtension = $sourceExtension.Replace("\", "\\")
+@"
 import { pathToFileURL } from "node:url";
 
-await import(pathToFileURL("D:\\src\\GitHub\\DamianEdwards\\copilot-cli-cost\\.github\\extensions\\copilot-cli-cost\\extension.mjs").href);
+await import(pathToFileURL("$escapedSourceExtension").href);
+"@ | Set-Content -Encoding UTF8 (Join-Path $extensionRoot "extension.mjs")
 ```
 
-Then reload extensions and try:
+In Copilot CLI, run:
+
+```text
+/extensions
+```
+
+Enable `copilot-cli-cost` under **User**. The `/cost` command and panel are available after the extension is running.
+
+## Use
 
 ```text
 /cost
+/cost help
 /cost panel on
 /cost panel off
+/cost panel refresh
 /cost session <session-id>
+/cost live-session <session-id>
+/cost --plan pro|pro-plus|business|enterprise
+/cost --billing-model usage-based|premium-requests
+/cost --currency USD|EUR|GBP|CAD|AUD|JPY|CHF
 ```
 
-Unlike prompt commands, this `/cost` command is handled by extension JavaScript and does not ask the model to calculate the result.
+`/cost` is handled by extension JavaScript. It does not ask the model to calculate the result.
 
-## Live cost via SDK extension
+The panel opens a native window:
 
-The SDK extension is the preferred live path because it can ask the current Copilot CLI session for metrics directly:
+```text
+/cost panel on
+```
+
+The panel shows:
+
+- Usage-based estimate
+- Premium-request estimate
+- Active session ID and data source
+- Current or assumed subscription
+- What-if subscription selector
+- Display currency selector
+- Per-model token bucket breakdown
+- Collapsed raw JSON payload
+
+## Data sources
+
+The SDK extension reads active-session metrics from Copilot CLI's session RPC API:
 
 ```js
 await session.rpc.usage.getMetrics()
 ```
 
-That returns per-model request counts, premium request cost, token buckets, current model, last-call token counts, API duration, and code-change counters. `/cost`, `copilot_cost_get`, and the panel use this source by default and write the normalized snapshot to `%LOCALAPPDATA%\copilot-cli-cost\live-sessions` for interoperability with the standalone CLI/statusline tools.
+That response includes:
 
-## Live cost via statusline
+- Per-model request counts
+- Premium request cost
+- Input, cached input, cache write, output, and reasoning token buckets
+- Active model
+- Last-call input/output token counts
+- API duration
+- Code-change counters
 
-Copilot CLI can also invoke a custom statusline command with a JSON payload on stdin. In current CLI builds this is gated by the experimental statusline flag. This is optional for `/cost`, but useful if you want live cost in the terminal statusline or want to enrich another custom statusline.
+The extension normalizes each read and writes a live snapshot to:
 
-Add this to `~/.copilot/config.json`:
+```text
+%LOCALAPPDATA%\copilot-cli-cost\live-sessions
+```
+
+Completed local sessions can be read from:
+
+```text
+%USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
+```
+
+The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
+
+## Statusline
+
+Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/config.json`:
 
 ```jsonc
 {
@@ -117,54 +145,30 @@ Add this to `~/.copilot/config.json`:
   "experimental_flags": ["STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "D:\\src\\GitHub\\DamianEdwards\\copilot-cli-cost\\scripts\\statusline.cmd"
+    "command": "%USERPROFILE%\\.copilot\\installed-plugins\\...\\copilot-cli-cost\\scripts\\statusline.cmd"
   }
 }
 ```
 
-The statusline bridge reads the payload, updates a live cache under `%LOCALAPPDATA%\copilot-cli-cost\live-sessions`, and prints a compact segment such as:
+Replace the command path with the installed plugin path on your machine. The statusline bridge prints a compact segment:
 
 ```text
 💸 Cost ~$0.7742 (77.4 cr) · 7.5 PRU · last 42K in/3K out
 ```
 
-The cached live snapshot can be read at any time:
+### Use another statusline
 
-```powershell
-npm run cost -- --live --plan pro
-npm run cost -- --live --billing-model premium-requests --plan pro
-```
-
-Or read a specific live session snapshot:
-
-```powershell
-npm run cost -- --live-session <session-id> --plan pro
-```
-
-Statusline configuration can be controlled with environment variables before launching `copilot`:
-
-```powershell
-$env:COPILOT_COST_PLAN = "enterprise"
-$env:COPILOT_COST_CURRENCY = "EUR"
-$env:COPILOT_COST_EXCHANGE_RATE = "0.9"
-$env:COPILOT_COST_PROMOTIONAL_ALLOWANCE = "true"
-copilot
-```
-
-If you already have a custom statusline, keep using it by making this statusline a decorator. Configure Copilot CLI to call `scripts\statusline.cmd`, then point `COPILOT_COST_STATUSLINE_PASSTHROUGH` at your existing statusline command:
+Set `COPILOT_COST_STATUSLINE_PASSTHROUGH` to call another statusline command. The default passthrough mode enriches the stdin JSON with `copilot_cost` and lets the inner statusline render all output.
 
 ```powershell
 $env:COPILOT_COST_STATUSLINE_PASSTHROUGH = "C:\Users\alex\.copilot\statusline\statusline.cmd"
 copilot
 ```
 
-When passthrough is configured, the default mode is `passthrough`: the inner statusline receives the original payload plus a `copilot_cost` object and is responsible for rendering all output. This lets any statusline decide where and how to show cost data:
+The enriched payload includes:
 
 ```jsonc
 {
-  "model": { "id": "gpt-5.5" },
-  "cost": { "total_premium_requests": 7.5 },
-  "context_window": { "...": "..." },
   "copilot_cost": {
     "schema_version": 1,
     "status_line": "💸 Cost ~$0.7742 (77.4 cr) · 7.5 PRU · last 42K in/3K out",
@@ -182,15 +186,15 @@ When passthrough is configured, the default mode is `passthrough`: the inner sta
 }
 ```
 
-To keep the old behavior where this bridge appends/prepends its own cost segment to the inner statusline output, set decorate mode:
+Set decorate mode to combine this bridge's output with the passthrough output:
 
 ```powershell
 $env:COPILOT_COST_STATUSLINE_MODE = "decorate"
-$env:COPILOT_COST_STATUSLINE_POSITION = "right" # right = existing statusline first, cost appended
+$env:COPILOT_COST_STATUSLINE_POSITION = "right"
 copilot
 ```
 
-Decorator options:
+Statusline environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -202,77 +206,50 @@ Decorator options:
 | `COPILOT_COST_STATUSLINE_HIDE_COST` | `false` | Cache live data but do not print the cost segment. |
 | `COPILOT_COST_STATUSLINE_COLOR` | `true` | Set to `false` to disable ANSI color in the rendered cost segment. |
 
-The statusline payload currently provides cumulative session totals:
+## Configuration
 
-```json
-{
-  "session_id": "session-id",
-  "model": {
-    "id": "gpt-5.5",
-    "display_name": "GPT-5.5"
-  },
-  "cost": {
-    "total_premium_requests": 7.5
-  },
-  "context_window": {
-    "total_input_tokens": 135659,
-    "total_output_tokens": 1333,
-    "total_cache_read_tokens": 91648,
-    "total_cache_write_tokens": 12000,
-    "total_reasoning_tokens": 335,
-    "last_call_input_tokens": 42000,
-    "last_call_output_tokens": 3000
-  }
-}
-```
-
-Because the payload has cumulative token totals and the current model, not a full historical per-model breakdown, the bridge caches successive payloads and attributes new token deltas to the active model for each refresh. The first payload seen for a session attributes existing totals to the active model.
-
-## Distribution model
-
-Copilot CLI plugins are not packaged as npm extensions. In the current CLI, they are installed with `copilot plugin install` from a GitHub repository, repository subdirectory, Git URL, or marketplace entry. For unpublished local development, register a local marketplace with `copilot plugin marketplace add`.
-
-After this repository is published to GitHub, users should be able to install directly:
+Set these environment variables before launching `copilot`:
 
 ```powershell
-copilot plugin install DamianEdwards/copilot-cli-cost
+$env:COPILOT_COST_PLAN = "enterprise"
+$env:COPILOT_COST_CURRENCY = "EUR"
+$env:COPILOT_COST_PROMOTIONAL_ALLOWANCE = "true"
+copilot
 ```
 
-To make it discoverable as a marketplace:
+| Variable | Meaning |
+| --- | --- |
+| `COPILOT_COST_PLAN` | Default plan when subscription detection is unavailable. |
+| `COPILOT_COST_CURRENCY` | Display currency code. USD is canonical. Non-USD values use Frankfurter unless an override is configured. |
+| `COPILOT_COST_EXCHANGE_RATE` | USD-to-display-currency exchange rate override for `COPILOT_COST_CURRENCY`. |
+| `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
+| `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates`. |
+| `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
+| `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `false` to exclude reasoning tokens from usage-based estimates. |
+
+## Standalone calculator
+
+Clone the repository when you want to run tests or use the calculator directly:
 
 ```powershell
-copilot plugin marketplace add DamianEdwards/copilot-cli-cost
-copilot plugin marketplace browse copilot-cli-cost-marketplace
-copilot plugin install copilot-cli-cost@copilot-cli-cost-marketplace
+git clone https://github.com/DamianEdwards/copilot-cli-cost.git
+cd copilot-cli-cost
+npm test
 ```
 
-## Session usage JSON
-
-For completed local Copilot CLI sessions, the calculator can read actual counters from `~/.copilot/session-state/<session-id>/events.jsonl`:
+Examples:
 
 ```powershell
-npm run cost -- --session aba582fa-1b08-472e-a69b-54228d95803b --plan pro
+npm run cost -- --sample
+npm run cost -- --sample --billing-model premium-requests --plan pro-plus
+npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
+npm run cost -- --session <session-id> --plan pro
+npm run cost -- --live --plan enterprise
+npm run cost -- --sample --currency EUR
+npm run cost -- --sample --currency EUR --exchange-rate 0.9
 ```
 
-The session event parser reads the latest metrics event, typically `session.shutdown`, and extracts:
-
-- `totalPremiumRequests`
-- per-model request count and premium request cost
-- input tokens
-- output tokens
-- cached input tokens
-- cache write tokens
-- reasoning tokens
-
-If newer events exist after the latest metrics event, the calculator marks the metrics as stale. For live sessions, prefer the statusline bridge above.
-
-For premium-request billing from the same local session:
-
-```powershell
-npm run cost -- --session aba582fa-1b08-472e-a69b-54228d95803b --billing-model premium-requests --plan pro
-```
-
-For usage-based billing, the calculator expects session usage shaped like this:
+Usage JSON shape:
 
 ```json
 {
@@ -286,51 +263,38 @@ For usage-based billing, the calculator expects session usage shaped like this:
       "inputTokens": 180000,
       "cachedInputTokens": 420000,
       "cacheWriteTokens": 0,
-      "outputTokens": 36000
+      "outputTokens": 36000,
+      "reasoningTokens": 1200
     }
   ]
 }
 ```
 
-For current premium-request billing, Copilot CLI already surfaces a current-session premium request count. You can calculate from that already-multiplied PRU count directly:
+## How estimates are calculated
 
-```powershell
-npm run cost -- --premium-requests 12.5 --plan pro
+Usage-based billing uses published per-1M-token rates:
+
+```text
+inputUsd       = inputTokens       / 1,000,000 * inputPerMillionUsd
+cachedInputUsd = cachedInputTokens / 1,000,000 * cachedInputPerMillionUsd
+cacheWriteUsd  = cacheWriteTokens  / 1,000,000 * cacheWritePerMillionUsd
+outputUsd      = outputTokens      / 1,000,000 * outputPerMillionUsd
+reasoningUsd   = reasoningTokens   / 1,000,000 * outputPerMillionUsd
+aiCredits      = totalUsd / 0.01
 ```
 
-If you also know how many monthly premium requests remained before the session, pass that to estimate the incremental billable charge:
+Premium-request billing uses Copilot-reported premium request units when present. If only model request counts are available, it applies the configured model multiplier table.
 
-```powershell
-npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
-```
+Non-USD currency values are display estimates. USD remains canonical because GitHub model rates and AI Credits are documented in USD. Non-USD `/cost` and panel requests fetch USD exchange rates from [Frankfurter](https://www.frankfurter.dev/) and cache them for reuse; explicit environment or CLI exchange-rate overrides take precedence.
 
-Without the remaining monthly allowance, the calculator shows the session's overage-equivalent value at the documented $0.04 USD per PRU rate, but it cannot know whether those PRUs are actually billable or simply consumed included allowance.
+## Limitations
 
-## Currency
-
-USD is canonical because GitHub's model rates and AI Credits are documented in USD. Non-USD currencies are display estimates:
-
-```powershell
-npm run cost -- --sample --currency GBP --exchange-rate 0.79
-```
-
-You can also set an environment variable:
-
-```powershell
-$env:COPILOT_COST_FX_EUR = "0.9"
-npm run cost -- --sample --currency EUR
-```
-
-## Important limitations
-
-- The current plugin scaffold records lifecycle events, not token counts. Current premium-request costing can use Copilot CLI's session PRU count.
-- Completed local CLI sessions include per-model counters in `events.jsonl`; live in-session status uses the experimental statusline payload.
-- Statusline live usage is strongest when the bridge starts with the session. If enabled mid-session, the first captured cumulative token totals are attributed to the currently active model.
-- Business and Enterprise included credits are pooled, so a session cost is not always an incremental charge.
+- Rate tables are hardcoded in `src/core/rates.js` and should be checked against GitHub billing docs.
+- Reasoning tokens are treated as output-priced unless `COPILOT_COST_BILL_REASONING_TOKENS=false`.
+- Business and Enterprise included credits are pooled at the billing entity level, so a session estimate is not always incremental billable spend.
 - Taxes, regional billing rules, and GitHub billing-account currency handling are not modeled.
-- Rate tables are hardcoded and should be versioned whenever GitHub updates published pricing.
+- Statusline per-model attribution depends on successive cumulative payloads and the active model at each refresh.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

@@ -7,6 +7,7 @@ import process from "node:process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { calculateSessionCost } from "../src/core/calculate.js";
+import { getUsdExchangeRate } from "../src/core/fx-rates.js";
 import { readSessionUsageFromEvents } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
 import { usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
@@ -136,6 +137,126 @@ test("supports non-USD display currency with explicit exchange rate", () => {
 
   assert.equal(result.currency.code, "EUR");
   assert.equal(result.displayTotal, 51.795);
+});
+
+test("carries exchange-rate metadata into calculation output", () => {
+  const result = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    plan: "enterprise",
+    currency: "EUR",
+    exchangeRateMetadata: {
+      EUR: {
+        date: "2026-05-06",
+        fetchedAt: "2026-05-06T12:00:00.000Z",
+        source: "frankfurter",
+        url: "https://api.frankfurter.dev/v2/rate/USD/EUR"
+      }
+    },
+    exchangeRates: {
+      EUR: 0.9
+    }
+  });
+
+  assert.equal(result.currency.code, "EUR");
+  assert.equal(result.currency.source, "frankfurter");
+  assert.equal(result.currency.date, "2026-05-06");
+  assert.equal(result.currency.url, "https://api.frankfurter.dev/v2/rate/USD/EUR");
+});
+
+test("fetches and caches Frankfurter USD exchange rates", async () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-fx-test-"));
+  let fetchCount = 0;
+  const fetchImpl = async (url) => {
+    fetchCount += 1;
+    assert.equal(url, "https://api.frankfurter.dev/v2/rate/USD/EUR");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        date: "2026-05-06",
+        rate: 0.88
+      })
+    };
+  };
+
+  try {
+    const first = await getUsdExchangeRate("eur", {
+      cacheDirectory: storeDirectory,
+      fetchImpl,
+      now: Date.parse("2026-05-06T12:00:00.000Z")
+    });
+    const second = await getUsdExchangeRate("EUR", {
+      cacheDirectory: storeDirectory,
+      fetchImpl,
+      now: Date.parse("2026-05-06T12:05:00.000Z")
+    });
+
+    assert.equal(first.source, "frankfurter");
+    assert.equal(first.rate, 0.88);
+    assert.equal(second.source, "frankfurter-cache");
+    assert.equal(second.rate, 0.88);
+    assert.equal(fetchCount, 1);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("accepts Frankfurter latest-style rate payloads", async () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-fx-test-"));
+  try {
+    const rate = await getUsdExchangeRate("GBP", {
+      cacheDirectory: storeDirectory,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          date: "2026-05-06",
+          rates: {
+            GBP: 0.75
+          }
+        })
+      }),
+      now: Date.parse("2026-05-06T12:00:00.000Z")
+    });
+
+    assert.equal(rate.quote, "GBP");
+    assert.equal(rate.rate, 0.75);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("uses stale cached exchange rates when Frankfurter is unavailable", async () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-fx-test-"));
+  try {
+    const first = await getUsdExchangeRate("EUR", {
+      cacheDirectory: storeDirectory,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          date: "2026-05-06",
+          rate: 0.88
+        })
+      }),
+      now: Date.parse("2026-05-06T12:00:00.000Z")
+    });
+    const stale = await getUsdExchangeRate("EUR", {
+      cacheDirectory: storeDirectory,
+      fetchImpl: async () => {
+        throw new Error("network unavailable");
+      },
+      now: Date.parse("2026-05-08T12:00:00.000Z")
+    });
+
+    assert.equal(first.source, "frankfurter");
+    assert.equal(stale.source, "frankfurter-cache-stale");
+    assert.equal(stale.rate, 0.88);
+    assert.equal(stale.stale, true);
+    assert.equal(stale.error, "network unavailable");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
 });
 
 test("reads Copilot CLI session shutdown metrics from events jsonl", () => {

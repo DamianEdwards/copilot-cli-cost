@@ -1,5 +1,7 @@
 const elements = {
   breakdown: document.getElementById("breakdown"),
+  currency: document.getElementById("currency"),
+  currencyNote: document.getElementById("currency-note"),
   currentPlan: document.getElementById("current-plan"),
   plan: document.getElementById("plan"),
   pruSubtitle: document.getElementById("pru-subtitle"),
@@ -13,6 +15,7 @@ const elements = {
   usageTotal: document.getElementById("usage-total"),
   whatIfNote: document.getElementById("what-if-note")
 };
+let selectedCurrency;
 let selectedPlan;
 const planAllowances = {
   free: { aiCredits: 0, premiumRequests: 50 },
@@ -36,13 +39,20 @@ elements.plan.addEventListener("change", () => {
   selectedPlan = elements.plan.value;
   refresh();
 });
+elements.currency.addEventListener("change", () => {
+  selectedCurrency = elements.currency.value;
+  refresh();
+});
 document.addEventListener("click", openExternalLink);
 setInterval(refresh, 2000);
 refresh();
 
 async function refresh() {
   try {
-    const data = await copilot.getCostData(selectedPlan ? { plan: selectedPlan } : {});
+    const data = await copilot.getCostData({
+      ...(selectedPlan ? { plan: selectedPlan } : {}),
+      ...(selectedCurrency ? { currency: selectedCurrency } : {})
+    });
     render(data);
   } catch (error) {
     elements.status.textContent = `Unable to read live cost data: ${error.message}`;
@@ -58,6 +68,7 @@ function render(data) {
   const currentPlan = currentSubscription?.plan;
   const activePlan = selectedPlan ?? usageBased?.plan ?? premiumRequests?.plan ?? currentPlan;
   renderCurrentPlan(currentSubscription, activePlan);
+  renderCurrency(data);
   if (!selectedPlan && activePlan && elements.plan.value !== activePlan) {
     elements.plan.value = activePlan;
   }
@@ -73,7 +84,7 @@ function render(data) {
   } else {
     const usagePlan = selectedPlan ?? usageBased.plan;
     const includedAiCredits = planAllowances[usagePlan]?.aiCredits ?? usageBased.includedAiCredits;
-    elements.usageTotal.textContent = formatUsd(usageBased.totalUsd);
+    elements.usageTotal.textContent = formatCurrency(usageBased.displayTotal, usageBased.currency.code);
     elements.usageSubtitle.textContent = `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatNumber(includedAiCredits, 1)} included · ${usagePlan}`;
   }
 
@@ -84,11 +95,30 @@ function render(data) {
     const pruPlan = selectedPlan ?? premiumRequests.plan;
     const includedPremiumRequests = planAllowances[pruPlan]?.premiumRequests ?? premiumRequests.includedPremiumRequests;
     elements.pruTotal.textContent = `${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU`;
-    elements.pruSubtitle.textContent = `${formatUsd(premiumRequests.overageEquivalentUsd)} overage-equivalent · ${formatNumber(includedPremiumRequests, 0)} included · ${pruPlan}`;
+    elements.pruSubtitle.textContent = `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${formatNumber(includedPremiumRequests, 0)} included · ${pruPlan}`;
   }
 
   renderBreakdown(usageBased);
   elements.raw.textContent = JSON.stringify(data, null, 2);
+}
+
+function renderCurrency(data) {
+  const currency = data.usageBased?.currency ?? data.premiumRequests?.currency;
+  const currencyCode = currency?.code ?? data.exchangeRate?.quote ?? "USD";
+  if (!selectedCurrency && elements.currency.value !== currencyCode) {
+    elements.currency.value = currencyCode;
+  }
+
+  const rateInfo = data.exchangeRate ?? currency;
+  if (currencyCode === "USD") {
+    elements.currencyNote.textContent = "Currency: USD (canonical)";
+    return;
+  }
+
+  const rate = Number(rateInfo?.rate ?? currency?.exchangeRate);
+  const source = rateInfo?.source ?? currency?.source ?? "exchange rate";
+  const date = rateInfo?.date ? ` · ${rateInfo.date}` : "";
+  elements.currencyNote.textContent = `Currency: 1 USD = ${formatNumber(rate, 6)} ${currencyCode} · ${source}${date}`;
 }
 
 async function openExternalLink(event) {
@@ -157,41 +187,43 @@ function renderBreakdown(usageBased) {
     return;
   }
 
+  const currency = usageBased.currency ?? { code: "USD", exchangeRate: 1 };
   elements.breakdown.innerHTML = usageBased.modelBreakdown.map((item) => `
     <div class="model-card">
       <div class="model-card-header">
         <strong>${escapeHtml(item.model)}</strong>
-        <span>${formatUsd(item.totalUsd)} · ${formatNumber(item.aiCredits, 1)} credits</span>
+        <span>${formatCurrency(item.displayTotal, currency.code)} · ${formatNumber(item.aiCredits, 1)} credits</span>
       </div>
       <table>
         <thead>
           <tr>
             <th>Bucket</th>
             <th>Tokens</th>
-            <th>Rate / 1M</th>
-            <th>Cost</th>
+            <th>Rate / 1M (${escapeHtml(currency.code)})</th>
+            <th>Cost (${escapeHtml(currency.code)})</th>
           </tr>
         </thead>
         <tbody>
-          ${renderBucket("Input", item.inputTokens, item.rates?.inputPerMillionUsd, item.inputUsd)}
-          ${renderBucket("Cached input", item.cachedInputTokens, item.rates?.cachedInputPerMillionUsd, item.cachedInputUsd)}
-          ${renderBucket("Cache write", item.cacheWriteTokens, item.rates?.cacheWritePerMillionUsd, item.cacheWriteUsd)}
-          ${renderBucket("Output", item.outputTokens, item.rates?.outputPerMillionUsd, item.outputUsd)}
-          ${renderBucket("Reasoning", item.reasoningTokens, item.rates?.reasoningPerMillionUsd, item.reasoningUsd)}
+          ${renderBucket("Input", item.inputTokens, item.rates?.inputPerMillionUsd, item.inputUsd, currency)}
+          ${renderBucket("Cached input", item.cachedInputTokens, item.rates?.cachedInputPerMillionUsd, item.cachedInputUsd, currency)}
+          ${renderBucket("Cache write", item.cacheWriteTokens, item.rates?.cacheWritePerMillionUsd, item.cacheWriteUsd, currency)}
+          ${renderBucket("Output", item.outputTokens, item.rates?.outputPerMillionUsd, item.outputUsd, currency)}
+          ${renderBucket("Reasoning", item.reasoningTokens, item.rates?.reasoningPerMillionUsd, item.reasoningUsd, currency)}
         </tbody>
       </table>
     </div>
   `).join("");
 }
 
-function renderBucket(label, tokens, rate, cost) {
+function renderBucket(label, tokens, rate, cost, currency) {
   const displayedRate = rate ?? inferRatePerMillion(tokens, cost);
+  const exchangeRate = Number(currency?.exchangeRate ?? 1);
   return `
     <tr>
       <td>${escapeHtml(label)}</td>
       <td>${formatInteger(tokens)}</td>
-      <td>${formatUsd(displayedRate)}</td>
-      <td>${formatUsd(cost)}</td>
+      <td>${formatCurrency(displayedRate * exchangeRate, currency?.code ?? "USD")}</td>
+      <td>${formatCurrency(Number(cost ?? 0) * exchangeRate, currency?.code ?? "USD")}</td>
     </tr>
   `;
 }
@@ -205,11 +237,11 @@ function inferRatePerMillion(tokens, cost) {
   return (bucketCost / tokenCount) * 1_000_000;
 }
 
-function formatUsd(value) {
+function formatCurrency(value, currencyCode = "USD") {
   return `~${new Intl.NumberFormat(undefined, {
-    currency: "USD",
-    maximumFractionDigits: 4,
-    minimumFractionDigits: Math.abs(Number(value ?? 0)) > 0 && Math.abs(Number(value ?? 0)) < 0.01 ? 4 : 2,
+    currency: currencyCode,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
     style: "currency"
   }).format(Number(value ?? 0))}`;
 }

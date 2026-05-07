@@ -23,6 +23,7 @@ export function calculateSessionCost(sessionUsage, scenario = {}) {
 
 export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
   const currency = resolveCurrency(scenario.currency ?? sessionUsage.currency ?? "USD", {
+    exchangeRateMetadata: scenario.exchangeRateMetadata,
     exchangeRates: scenario.exchangeRates
   });
   const modelBreakdown = normalizeModelUsage(sessionUsage).map((usage) => {
@@ -97,6 +98,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
 
 export function calculatePremiumRequestCost(sessionUsage, scenario = {}) {
   const currency = resolveCurrency(scenario.currency ?? sessionUsage.currency ?? "USD", {
+    exchangeRateMetadata: scenario.exchangeRateMetadata,
     exchangeRates: scenario.exchangeRates
   });
   const multiplierSet = scenario.multiplierSet ?? "current";

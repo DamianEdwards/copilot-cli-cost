@@ -13,9 +13,7 @@
       "description": "Estimate Copilot CLI session cost across premium-request and usage-based billing models.",
       "version": "0.1.0",
       "source": ".",
-      "skills": "skills/",
-      "commands": "commands/",
-      "hooks": "hooks.json"
+      "skills": "skills/"
     }
   ]
 }

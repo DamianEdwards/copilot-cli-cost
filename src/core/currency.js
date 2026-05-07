@@ -8,6 +8,7 @@ export function resolveCurrency(currency, options = {}) {
     };
   }
 
+  const metadata = options.exchangeRateMetadata?.[code];
   const configuredRate = options.exchangeRates?.[code] ?? readRateFromEnvironment(code);
   if (!configuredRate || Number(configuredRate) <= 0) {
     throw new Error(`No USD-to-${code} exchange rate configured. Pass --exchange-rate <rate> or set COPILOT_COST_FX_${code}.`);
@@ -16,7 +17,10 @@ export function resolveCurrency(currency, options = {}) {
   return {
     code,
     exchangeRate: Number(configuredRate),
-    source: options.exchangeRates?.[code] ? "configured" : "environment"
+    source: metadata?.source ?? (options.exchangeRates?.[code] ? "configured" : "environment"),
+    date: metadata?.date,
+    fetchedAt: metadata?.fetchedAt,
+    url: metadata?.url
   };
 }
 
