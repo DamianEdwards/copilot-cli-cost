@@ -42,7 +42,7 @@ Plugin installation has two parts: `plugin.json` exposes plugin metadata and ski
 - Keep new source as ESM and follow the existing named-export style in `src/core/`. CLI entrypoints call `main()` at top level and set `process.exitCode` instead of throwing uncaught errors for user-facing failures.
 - Preserve the canonical `sessionUsage` fields when adding data sources: `modelUsage` entries should use `model`, `requests`, `inputTokens`, `cachedInputTokens`, `cacheWriteTokens`, `outputTokens`, and `reasoningTokens`.
 - Treat USD as canonical. Non-USD values are display estimates; pass exchange-rate metadata through calculation output so UI surfaces can label the source accurately.
-- Reasoning tokens are billed as output-priced tokens unless `billReasoningTokens` or `COPILOT_COST_BILL_REASONING_TOKENS=false` disables them.
+- Reasoning tokens are informational by default; only bill them as output-priced when `billReasoningTokens` or `COPILOT_COST_BILL_REASONING_TOKENS=true` opts in.
 - For premium-request billing, do not double-apply multipliers. If Copilot supplies `premiumRequests`, `totalPremiumRequests`, or `currentSessionPremiumRequests`, use that direct value.
 - Statusline payloads contain cumulative token totals, not historical per-model buckets. `mergeStatusLinePayload()` attributes deltas to the active model and resets when counters decrease.
 - Keep the statusline wrappers paired across platforms: Windows uses `scripts/statusline.cmd`; macOS/Linux use `scripts/statusline.sh`, which should stay LF-normalized through `.gitattributes`.

@@ -38,9 +38,10 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
     const cachedInputUsd = costForTokens(usage.cachedInputTokens, rate.cachedInputPerMillionUsd);
     const cacheWriteUsd = costForTokens(usage.cacheWriteTokens, rate.cacheWritePerMillionUsd);
     const outputUsd = costForTokens(usage.outputTokens, rate.outputPerMillionUsd);
-    const reasoningUsd = scenario.billReasoningTokens === false
-      ? 0
-      : costForTokens(usage.reasoningTokens, rate.outputPerMillionUsd);
+    const billReasoningTokens = scenario.billReasoningTokens === true;
+    const reasoningUsd = billReasoningTokens
+      ? costForTokens(usage.reasoningTokens, rate.outputPerMillionUsd)
+      : 0;
     const totalUsd = roundCost(inputUsd + cachedInputUsd + cacheWriteUsd + outputUsd + reasoningUsd);
 
     return {
@@ -58,7 +59,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
         cachedInputPerMillionUsd: rate.cachedInputPerMillionUsd,
         cacheWritePerMillionUsd: rate.cacheWritePerMillionUsd,
         outputPerMillionUsd: rate.outputPerMillionUsd,
-        reasoningPerMillionUsd: rate.outputPerMillionUsd
+        reasoningPerMillionUsd: billReasoningTokens ? rate.outputPerMillionUsd : 0
       },
       inputUsd,
       cachedInputUsd,

@@ -51,7 +51,7 @@ test("calculates usage-based billing from token buckets", () => {
     cachedInputPerMillionUsd: 0.5,
     cacheWritePerMillionUsd: 0,
     outputPerMillionUsd: 30,
-    reasoningPerMillionUsd: 30
+    reasoningPerMillionUsd: 0
   });
   assert.equal(result.modelBreakdown[0].uncachedInputTokens, 0);
   assert.equal(result.modelBreakdown[0].inputUsd, 0);
@@ -82,6 +82,39 @@ test("calculates usage-based input billing from uncached input tokens", () => {
   assert.equal(result.modelBreakdown[0].inputUsd, 3);
   assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.2);
   assert.equal(result.totalUsd, 3.2);
+});
+
+test("keeps reasoning tokens informational unless explicitly billed", () => {
+  const usage = {
+    sessionId: "reasoning-token-session",
+    modelUsage: [
+      {
+        model: "gpt-5.4",
+        inputTokens: 2_034_655,
+        cachedInputTokens: 1_883_264,
+        outputTokens: 18_049,
+        reasoningTokens: 7_280
+      }
+    ]
+  };
+
+  const defaultResult = calculateSessionCost(usage, {
+    billingModel: "usage-based",
+    currency: "USD"
+  });
+  const optInResult = calculateSessionCost(usage, {
+    billingModel: "usage-based",
+    billReasoningTokens: true,
+    currency: "USD"
+  });
+
+  assert.equal(defaultResult.modelBreakdown[0].uncachedInputTokens, 151_391);
+  assert.equal(defaultResult.modelBreakdown[0].reasoningUsd, 0);
+  assert.equal(defaultResult.modelBreakdown[0].rates.reasoningPerMillionUsd, 0);
+  assert.equal(defaultResult.totalUsd, 1.120029);
+  assert.equal(optInResult.modelBreakdown[0].reasoningUsd, 0.1092);
+  assert.equal(optInResult.modelBreakdown[0].rates.reasoningPerMillionUsd, 15);
+  assert.equal(optInResult.totalUsd, 1.229229);
 });
 
 test("calculates zero usage when model usage is not available yet", () => {
@@ -383,10 +416,10 @@ test("calculates usage-based billing from Copilot CLI event metrics", () => {
     plan: "pro"
   });
 
-  assert.equal(result.totalUsd, 0.315919);
+  assert.equal(result.totalUsd, 0.305869);
   assert.equal(result.modelBreakdown[0].uncachedInputTokens, 44011);
   assert.equal(result.modelBreakdown[0].inputUsd, 0.220055);
-  assert.equal(result.modelBreakdown[0].reasoningUsd, 0.01005);
+  assert.equal(result.modelBreakdown[0].reasoningUsd, 0);
 });
 
 test("normalizes Copilot CLI statusline payloads", () => {
@@ -501,7 +534,7 @@ test("statusline CLI enriches passthrough payload by default", () => {
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "base gpt-5.5 31.5919 credits 7.5 PRU");
+    assert.equal(result.stdout, "base gpt-5.5 30.5869 credits 7.5 PRU");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -540,7 +573,7 @@ test("statusline CLI can decorate passthrough statusline output", () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^base gpt-5\.5 · 💸 Cost /);
-    assert.match(result.stdout, /~\$0\.3159 \(31\.6 cr\)/);
+    assert.match(result.stdout, /~\$0\.3059 \(30\.6 cr\)/);
     assert.match(result.stdout, /7\.5 PRU/);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });

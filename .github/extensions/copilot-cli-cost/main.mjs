@@ -186,6 +186,7 @@ async function getCostData({
     currency,
     exchangeRateMetadata: exchangeRate.metadata,
     exchangeRates: exchangeRate.exchangeRates,
+    billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true",
     plan: resolvedPlan,
     promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true"
   };

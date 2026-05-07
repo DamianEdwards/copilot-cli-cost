@@ -92,10 +92,10 @@ inputUsd            = uncachedInputTokens / 1,000,000 * inputPerMillionUsd
 cachedInputUsd      = cachedInputTokens   / 1,000,000 * cachedInputPerMillionUsd
 cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
 outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
-reasoningUsd        = reasoningTokens     / 1,000,000 * outputPerMillionUsd
+reasoningUsd        = 0 unless billReasoningTokens is true
 ```
 
-Reasoning tokens are currently treated as output-priced unless `billReasoningTokens` is disabled. This should be revisited if GitHub documents a separate reasoning-token rate.
+Reasoning tokens are shown as informational only by default because GitHub's published Copilot pricing table does not list a separate reasoning-token bucket. `billReasoningTokens` can opt into output-priced reasoning cost if Copilot metrics are later confirmed to report output tokens excluding reasoning.
 
 ## Accuracy notes
 

@@ -208,7 +208,7 @@ macOS/Linux:
 Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
 
 ```text
-💸 Cost ~$0.3159 (31.6 cr) · 7.5 PRU · last 42K in/3K out
+💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
 ```
 
 ### Use another statusline
@@ -235,11 +235,11 @@ The enriched payload includes:
 {
   "copilot_cost": {
     "schema_version": 1,
-    "status_line": "💸 Cost ~$0.3159 (31.6 cr) · 7.5 PRU · last 42K in/3K out",
+    "status_line": "💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out",
     "usage_based": {
       "billingModel": "usage-based",
-      "totalUsd": 0.315919,
-      "aiCredits": 31.5919
+      "totalUsd": 0.305869,
+      "aiCredits": 30.5869
     },
     "premium_requests": {
       "billingModel": "premium-requests",
@@ -310,7 +310,7 @@ copilot
 | `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
 | `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates` on Windows, `~/Library/Caches/copilot-cli-cost/fx-rates` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates` on Linux. |
 | `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
-| `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `false` to exclude reasoning tokens from usage-based estimates. |
+| `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `true` to include reasoning tokens as output-priced cost. By default they are shown as informational only. |
 
 The live session cache can be overridden with `COPILOT_COST_LIVE_STORE`. By default it uses the same platform cache root as `COPILOT_COST_FX_CACHE`.
 
@@ -373,7 +373,7 @@ inputUsd            = uncachedInputTokens / 1,000,000 * inputPerMillionUsd
 cachedInputUsd      = cachedInputTokens   / 1,000,000 * cachedInputPerMillionUsd
 cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
 outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
-reasoningUsd        = reasoningTokens     / 1,000,000 * outputPerMillionUsd
+reasoningUsd        = 0 unless COPILOT_COST_BILL_REASONING_TOKENS=true
 aiCredits           = totalUsd / 0.01
 ```
 
@@ -384,7 +384,7 @@ Non-USD currency values are display estimates. USD remains canonical because Git
 ## Limitations
 
 - Rate tables are hardcoded in `src/core/rates.js` and should be checked against GitHub billing docs.
-- Reasoning tokens are treated as output-priced unless `COPILOT_COST_BILL_REASONING_TOKENS=false`.
+- Reasoning tokens are shown as informational only unless `COPILOT_COST_BILL_REASONING_TOKENS=true`, because GitHub's published Copilot pricing table does not list a separate reasoning-token bucket.
 - Business and Enterprise included credits are pooled at the billing entity level, so a session estimate is not always incremental billable spend.
 - Taxes, regional billing rules, and GitHub billing-account currency handling are not modeled.
 - Statusline per-model attribution depends on successive cumulative payloads and the active model at each refresh.

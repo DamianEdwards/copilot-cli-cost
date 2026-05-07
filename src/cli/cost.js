@@ -104,6 +104,7 @@ function readOptionalNumber(value) {
 
 function parseArgs(argv) {
   const args = {
+    billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true",
     billingModel: undefined,
     currency: "USD",
     multiplierSet: "current",
@@ -130,6 +131,9 @@ function parseArgs(argv) {
         break;
       case "--live-session":
         args.liveSession = readValue(argv, ++index, arg);
+        break;
+      case "--bill-reasoning-tokens":
+        args.billReasoningTokens = true;
         break;
       case "--no-bill-reasoning-tokens":
         args.billReasoningTokens = false;
@@ -280,7 +284,8 @@ Options:
   --premium-requests <count>       Calculate from an already-multiplied PRU count
   --remaining-premium-requests <n> Monthly PRUs remaining before this session
   --session-id <id>                Session id to include in output
-  --no-bill-reasoning-tokens       Do not include reasoning tokens as output-token cost
+  --bill-reasoning-tokens          Include reasoning tokens as output-priced cost
+  --no-bill-reasoning-tokens       Keep reasoning tokens informational only
   --currency <code>                Display currency, default USD
   --exchange-rate <rate>           USD-to-currency exchange rate override for non-USD display
   --multiplier-set <set>           current | annual-after-2026-06-01

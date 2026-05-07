@@ -1,6 +1,6 @@
 {
   "name": "copilot-cli-cost",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "GitHub Copilot CLI plugin and calculator for estimating session cost.",
   "type": "module",

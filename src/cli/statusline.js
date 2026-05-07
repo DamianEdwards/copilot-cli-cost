@@ -99,7 +99,7 @@ function tryCalculate(sessionUsage, billingModel) {
       exchangeRates: readExchangeRates(),
       promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
       remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
-      billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS !== "false"
+      billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
     });
   } catch (error) {
     logDebugError(`failed to calculate ${billingModel} statusline cost`, error);
