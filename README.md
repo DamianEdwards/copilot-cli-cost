@@ -7,6 +7,8 @@ Copilot CLI Cost is a GitHub Copilot CLI plugin scaffold for showing session cos
 
 The calculator stores canonical cost in USD and converts to a selected display currency with an explicit exchange-rate snapshot.
 
+![Copilot Cost panel showing session estimates and token bucket breakdown](docs/session-cost-panel.png)
+
 ## Current status
 
 This repository is intentionally split into three parts:
