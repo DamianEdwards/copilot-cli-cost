@@ -24,7 +24,28 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 ## Install
 
-### 1. Install the plugin from GitHub
+### 1. Enable experimental Copilot CLI extensions
+
+The `/cost` command and panel use the experimental Copilot CLI SDK extensions feature. In a Copilot CLI session, run:
+
+```text
+/experimental
+```
+
+Enable experimental mode and the **Extensions** feature if it is listed, then restart Copilot CLI if prompted.
+
+If your Copilot CLI version does not show an Extensions option in `/experimental`, add the flag manually in `~/.copilot/config.json`:
+
+```jsonc
+{
+  "experimental": true,
+  "experimental_flags": ["EXTENSIONS"]
+}
+```
+
+If you already have `experimental_flags`, add `"EXTENSIONS"` to the existing list instead of replacing it.
+
+### 2. Install the plugin from GitHub
 
 Run the following in your shell to install the plugin from the GitHub repository:
 
@@ -38,7 +59,7 @@ Verify that the plugin is installed:
 copilot plugin list
 ```
 
-### 2. Enable the deterministic `/cost` command and panel
+### 3. Enable the deterministic `/cost` command and panel
 
 The plugin install puts the package on disk and makes plugin components such as skills available. The `/cost` command and panel are implemented as a Copilot CLI SDK extension, and SDK extensions are discovered from `.github/extensions/` in a repository or from the user extensions folder.
 
