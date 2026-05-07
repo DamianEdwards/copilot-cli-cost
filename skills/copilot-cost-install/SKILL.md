@@ -11,7 +11,9 @@ Goal:
 - Run the plugin's deterministic shim installer script.
 - Tell the user to enable or reload the `copilot-cli-cost` user extension in `/extensions` if it is not already running.
 
-Preferred command:
+Use the command for the user's shell.
+
+PowerShell:
 
 ```powershell
 $installer = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Directory -Recurse |
@@ -25,7 +27,7 @@ if (-not $installer) {
 node (Join-Path $installer "scripts\install-extension-shim.mjs")
 ```
 
-Bash equivalent:
+Bash/zsh:
 
 ```bash
 installer="$(find "$HOME/.copilot/installed-plugins" -type f -path '*/scripts/install-extension-shim.mjs' | head -n 1)"

@@ -1,11 +1,12 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { getAppCacheSubdirectory } from "./app-cache-dir.js";
 
 export function getLiveSessionStoreDirectory(options = {}) {
+  const env = options.env ?? process.env;
   return options.storeDirectory
-    ?? process.env.COPILOT_COST_LIVE_STORE
-    ?? path.join(process.env.LOCALAPPDATA ?? os.tmpdir(), "copilot-cli-cost", "live-sessions");
+    ?? env.COPILOT_COST_LIVE_STORE
+    ?? getAppCacheSubdirectory("live-sessions", options);
 }
 
 export function readLatestLiveSession(options = {}) {

@@ -118,7 +118,10 @@ The SDK extension and standalone calculator resolve non-USD rates in this order:
 2. `COPILOT_COST_FX_<CODE>` environment variable.
 3. `COPILOT_COST_EXCHANGE_RATE` environment variable.
 4. Cached Frankfurter USD-to-currency rate.
-5. Fresh Frankfurter USD-to-currency rate, cached under `%LOCALAPPDATA%\copilot-cli-cost\fx-rates`.
+5. Fresh Frankfurter USD-to-currency rate, cached under the platform cache folder:
+   - Windows: `%LOCALAPPDATA%\copilot-cli-cost\fx-rates`
+   - macOS: `~/Library/Caches/copilot-cli-cost/fx-rates`
+   - Linux: `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates`
 
 If a cached rate is expired and Frankfurter is unavailable, the resolver returns the stale cache entry with `source: "frankfurter-cache-stale"` so the UI can still label the estimate accurately.
 
@@ -157,9 +160,11 @@ Active sessions should use the deterministic SDK extension first. It calls `sess
 - `codeChanges`
 - per-model `requests.count`, `requests.cost`, and token buckets under `usage`
 
-The extension writes the normalized RPC snapshot to `%LOCALAPPDATA%\copilot-cli-cost\live-sessions` so the standalone CLI and statusline ecosystem can consume the same shape.
+The extension writes the normalized RPC snapshot to the platform live-session cache so the standalone CLI and statusline ecosystem can consume the same shape.
 
-Active sessions can also use the experimental statusline payload, enabled with:
+Active sessions can also use the experimental statusline payload, enabled with the platform-specific wrapper:
+
+Windows:
 
 ```jsonc
 {
@@ -172,6 +177,19 @@ Active sessions can also use the experimental statusline payload, enabled with:
 }
 ```
 
+macOS/Linux:
+
+```jsonc
+{
+  "experimental": true,
+  "experimental_flags": ["STATUS_LINE"],
+  "statusLine": {
+    "type": "command",
+    "command": "sh /path/to/copilot-cli-cost/scripts/statusline.sh"
+  }
+}
+```
+
 The payload includes:
 
 - `session_id`
@@ -180,7 +198,7 @@ The payload includes:
 - cumulative token buckets under `context_window.total_*`
 - last-call token buckets under `context_window.last_call_*`
 
-The payload does not provide a historical per-model breakdown. `src/cli/statusline.js` caches successive cumulative snapshots under `%LOCALAPPDATA%\copilot-cli-cost\live-sessions` and attributes deltas to the active model for each refresh. `/cost --live` reads the latest cached snapshot when the SDK extension has not already written an RPC-derived one.
+The payload does not provide a historical per-model breakdown. `src/cli/statusline.js` caches successive cumulative snapshots under the platform live-session cache (`%LOCALAPPDATA%\copilot-cli-cost\live-sessions` on Windows, `~/Library/Caches/copilot-cli-cost/live-sessions` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/live-sessions` on Linux) and attributes deltas to the active model for each refresh. `/cost --live` reads the latest cached snapshot when the SDK extension has not already written an RPC-derived one.
 
 The statusline entrypoint is designed to be a decorator, not a replacement. If `COPILOT_COST_STATUSLINE_PASSTHROUGH` is set, it invokes that command with the original stdin payload enriched with `copilot_cost`. By default the passthrough command owns all rendering; `COPILOT_COST_STATUSLINE_MODE=decorate` composes the passthrough output with the bridge's compact cost segment. This lets users keep any custom statusline while still feeding the live cost cache.
 

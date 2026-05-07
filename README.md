@@ -158,16 +158,19 @@ That response includes:
 - API duration
 - Code-change counters
 
-The extension normalizes each read and writes a live snapshot to:
+The extension normalizes each read and writes a live snapshot to the platform cache folder:
 
 ```text
-%LOCALAPPDATA%\copilot-cli-cost\live-sessions
+Windows: %LOCALAPPDATA%\copilot-cli-cost\live-sessions
+macOS:   ~/Library/Caches/copilot-cli-cost/live-sessions
+Linux:   ${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/live-sessions
 ```
 
 Completed local sessions can be read from:
 
 ```text
-%USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
+Windows: %USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
+macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 ```
 
 The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
@@ -175,6 +178,8 @@ The parser reads the latest metrics event and extracts per-model token buckets p
 ## Statusline
 
 Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/config.json`:
+
+Windows:
 
 ```jsonc
 {
@@ -187,7 +192,20 @@ Copilot CLI can invoke a statusline command with a JSON payload on stdin. Config
 }
 ```
 
-Replace the command path with the installed plugin path on your machine. The statusline bridge prints a compact segment:
+macOS/Linux:
+
+```jsonc
+{
+  "experimental": true,
+  "experimental_flags": ["STATUS_LINE"],
+  "statusLine": {
+    "type": "command",
+    "command": "sh /path/to/installed/copilot-cli-cost/scripts/statusline.sh"
+  }
+}
+```
+
+Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
 
 ```text
 💸 Cost ~$0.7742 (77.4 cr) · 7.5 PRU · last 42K in/3K out
@@ -197,8 +215,17 @@ Replace the command path with the installed plugin path on your machine. The sta
 
 Set `COPILOT_COST_STATUSLINE_PASSTHROUGH` to call another statusline command. The default passthrough mode enriches the stdin JSON with `copilot_cost` and lets the inner statusline render all output.
 
+PowerShell:
+
 ```powershell
 $env:COPILOT_COST_STATUSLINE_PASSTHROUGH = "C:\Users\alex\.copilot\statusline\statusline.cmd"
+copilot
+```
+
+macOS/Linux:
+
+```sh
+export COPILOT_COST_STATUSLINE_PASSTHROUGH="$HOME/.copilot/statusline/statusline.sh"
 copilot
 ```
 
@@ -225,9 +252,19 @@ The enriched payload includes:
 
 Set decorate mode to combine this bridge's output with the passthrough output:
 
+PowerShell:
+
 ```powershell
 $env:COPILOT_COST_STATUSLINE_MODE = "decorate"
 $env:COPILOT_COST_STATUSLINE_POSITION = "right"
+copilot
+```
+
+macOS/Linux:
+
+```sh
+export COPILOT_COST_STATUSLINE_MODE=decorate
+export COPILOT_COST_STATUSLINE_POSITION=right
 copilot
 ```
 
@@ -247,10 +284,21 @@ Statusline environment variables:
 
 Set these environment variables before launching `copilot`:
 
+PowerShell:
+
 ```powershell
 $env:COPILOT_COST_PLAN = "enterprise"
 $env:COPILOT_COST_CURRENCY = "EUR"
 $env:COPILOT_COST_PROMOTIONAL_ALLOWANCE = "true"
+copilot
+```
+
+macOS/Linux:
+
+```sh
+export COPILOT_COST_PLAN=enterprise
+export COPILOT_COST_CURRENCY=EUR
+export COPILOT_COST_PROMOTIONAL_ALLOWANCE=true
 copilot
 ```
 
@@ -260,9 +308,17 @@ copilot
 | `COPILOT_COST_CURRENCY` | Display currency code. USD is canonical. Non-USD values use Frankfurter unless an override is configured. |
 | `COPILOT_COST_EXCHANGE_RATE` | USD-to-display-currency exchange rate override for `COPILOT_COST_CURRENCY`. |
 | `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
-| `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates`. |
+| `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates` on Windows, `~/Library/Caches/copilot-cli-cost/fx-rates` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates` on Linux. |
 | `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
 | `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `false` to exclude reasoning tokens from usage-based estimates. |
+
+The live session cache can be overridden with `COPILOT_COST_LIVE_STORE`. By default it uses the same platform cache root as `COPILOT_COST_FX_CACHE`.
+
+### Native panel notes
+
+The `/cost` command and calculator are pure Node.js. The native panel uses `@webviewjs/webview`, which installs a platform-specific optional package for Windows, macOS, and Linux x64. The extension bootstrap runs `npm install --include=optional --no-audit --no-fund` when those panel dependencies are missing.
+
+On Linux, the native webview package still depends on system GTK/WebKit libraries supplied by your distribution, such as WebKitGTK and GTK. If `/cost panel on` fails to open, install your distribution's WebKitGTK/GTK runtime packages and reload the extension.
 
 ## Standalone calculator
 

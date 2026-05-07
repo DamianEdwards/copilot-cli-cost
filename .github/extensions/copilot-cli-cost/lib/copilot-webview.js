@@ -53,17 +53,48 @@ const BRIDGE_JS = `(() => {
 })();`;
 
 export async function bootstrap(extensionDirectory) {
-  const packagePath = join(extensionDirectory, "package.json");
-  const lockPath = join(extensionDirectory, "package-lock.json");
-  if (existsSync(lockPath) && statSync(packagePath).mtimeMs <= statSync(lockPath).mtimeMs) {
+  if (hasPanelDependencies(extensionDirectory)) {
     return;
   }
 
   const session = await joinSession();
   await session.log("Installing Copilot Cost panel dependencies...", { ephemeral: true });
-  execSync("npm install --no-audit --no-fund", { cwd: extensionDirectory, stdio: "ignore" });
-  await session.log("Copilot Cost panel dependencies installed.", { ephemeral: true });
-  await session.disconnect();
+  try {
+    execSync("npm install --include=optional --no-audit --no-fund", { cwd: extensionDirectory, stdio: "ignore" });
+    await session.log("Copilot Cost panel dependencies installed.", { ephemeral: true });
+  } finally {
+    await session.disconnect();
+  }
+}
+
+function hasPanelDependencies(extensionDirectory) {
+  return getRequiredPanelPackages().every((packageName) => existsSync(getPackageJsonPath(extensionDirectory, packageName)));
+}
+
+function getRequiredPanelPackages({ arch = process.arch, platform = process.platform } = {}) {
+  const packages = ["@webviewjs/webview", "ws"];
+  const nativePackage = getWebviewNativePackageName(platform, arch);
+  if (nativePackage) {
+    packages.push(nativePackage);
+  }
+  return packages;
+}
+
+function getWebviewNativePackageName(platform, arch) {
+  if (platform === "darwin" && (arch === "arm64" || arch === "x64")) {
+    return `@webviewjs/webview-darwin-${arch}`;
+  }
+  if (platform === "linux" && arch === "x64") {
+    return "@webviewjs/webview-linux-x64-gnu";
+  }
+  if (platform === "win32" && (arch === "arm64" || arch === "ia32" || arch === "x64")) {
+    return `@webviewjs/webview-win32-${arch}-msvc`;
+  }
+  return null;
+}
+
+function getPackageJsonPath(extensionDirectory, packageName) {
+  return join(extensionDirectory, "node_modules", ...packageName.split("/"), "package.json");
 }
 
 export class CopilotWebview {

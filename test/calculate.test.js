@@ -6,8 +6,10 @@ import path from "node:path";
 import process from "node:process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { getAppCacheDirectory } from "../src/core/app-cache-dir.js";
 import { calculateSessionCost } from "../src/core/calculate.js";
-import { getUsdExchangeRate } from "../src/core/fx-rates.js";
+import { getFxRateCacheDirectory, getUsdExchangeRate } from "../src/core/fx-rates.js";
+import { getLiveSessionStoreDirectory } from "../src/core/live-session-store.js";
 import { readSessionUsageFromEvents } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
 import { usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
@@ -161,6 +163,77 @@ test("carries exchange-rate metadata into calculation output", () => {
   assert.equal(result.currency.source, "frankfurter");
   assert.equal(result.currency.date, "2026-05-06");
   assert.equal(result.currency.url, "https://api.frankfurter.dev/v2/rate/USD/EUR");
+});
+
+test("resolves platform-specific cache directories", () => {
+  assert.equal(
+    getAppCacheDirectory({
+      env: { LOCALAPPDATA: "C:\\Users\\alex\\AppData\\Local" },
+      homeDirectory: "C:\\Users\\alex",
+      platform: "win32"
+    }),
+    "C:\\Users\\alex\\AppData\\Local\\copilot-cli-cost"
+  );
+  assert.equal(
+    getAppCacheDirectory({
+      env: { LOCALAPPDATA: "C:\\Temp\\LocalAppData" },
+      homeDirectory: "/home/alex",
+      platform: "linux"
+    }),
+    "/home/alex/.cache/copilot-cli-cost"
+  );
+  assert.equal(
+    getAppCacheDirectory({
+      env: {},
+      homeDirectory: "/Users/alex",
+      platform: "darwin"
+    }),
+    "/Users/alex/Library/Caches/copilot-cli-cost"
+  );
+  assert.equal(
+    getAppCacheDirectory({
+      env: { XDG_CACHE_HOME: "/var/cache/alex" },
+      homeDirectory: "/home/alex",
+      platform: "linux"
+    }),
+    "/var/cache/alex/copilot-cli-cost"
+  );
+});
+
+test("uses app cache defaults for live sessions and fx rates", () => {
+  const options = {
+    env: {},
+    homeDirectory: "/home/alex",
+    platform: "linux"
+  };
+
+  assert.equal(getLiveSessionStoreDirectory(options), "/home/alex/.cache/copilot-cli-cost/live-sessions");
+  assert.equal(getFxRateCacheDirectory(options), "/home/alex/.cache/copilot-cli-cost/fx-rates");
+});
+
+test("preserves app-specific cache overrides", () => {
+  assert.equal(
+    getLiveSessionStoreDirectory({
+      env: {
+        COPILOT_COST_LIVE_STORE: "/tmp/copilot-live",
+        LOCALAPPDATA: "C:\\Temp\\LocalAppData"
+      },
+      homeDirectory: "/home/alex",
+      platform: "linux"
+    }),
+    "/tmp/copilot-live"
+  );
+  assert.equal(
+    getFxRateCacheDirectory({
+      env: {
+        COPILOT_COST_FX_CACHE: "/tmp/copilot-fx",
+        XDG_CACHE_HOME: "/tmp/xdg-cache"
+      },
+      homeDirectory: "/home/alex",
+      platform: "linux"
+    }),
+    "/tmp/copilot-fx"
+  );
 });
 
 test("fetches and caches Frankfurter USD exchange rates", async () => {

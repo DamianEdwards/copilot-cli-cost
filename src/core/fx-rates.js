@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { getAppCacheSubdirectory } from "./app-cache-dir.js";
 import { normalizeCurrency } from "./currency.js";
 
 const DEFAULT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -43,9 +43,10 @@ export async function getUsdExchangeRate(currency, options = {}) {
 }
 
 export function getFxRateCacheDirectory(options = {}) {
+  const env = options.env ?? process.env;
   return options.cacheDirectory
-    ?? process.env.COPILOT_COST_FX_CACHE
-    ?? path.join(process.env.LOCALAPPDATA ?? os.tmpdir(), "copilot-cli-cost", "fx-rates");
+    ?? env.COPILOT_COST_FX_CACHE
+    ?? getAppCacheSubdirectory("fx-rates", options);
 }
 
 export function readCachedUsdExchangeRate(currency, options = {}) {

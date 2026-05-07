@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { calculateSessionCost } from "../core/calculate.js";
+import { getAppCacheDirectory } from "../core/app-cache-dir.js";
 import { formatMoney } from "../core/currency.js";
 import { mergeStatusLinePayload, parseStatusLinePayload } from "../core/statusline-payload.js";
 
@@ -265,7 +265,7 @@ function logDebugError(message, error) {
     return;
   }
 
-  const directory = path.join(process.env.LOCALAPPDATA ?? os.tmpdir(), "copilot-cli-cost");
+  const directory = getAppCacheDirectory();
   fs.mkdirSync(directory, { recursive: true });
   fs.appendFileSync(
     path.join(directory, "statusline-debug.log"),
