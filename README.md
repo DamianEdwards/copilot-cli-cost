@@ -38,27 +38,39 @@ copilot plugin list
 
 ### Enable the deterministic `/cost` command and panel
 
-Copilot CLI SDK extensions are loaded from user and project extension folders. The plugin installer stores this repository under Copilot's installed plugin directory, so register the SDK extension with a small user-scoped delegate:
+The plugin install puts the package on disk and makes plugin components such as skills available. The `/cost` command and panel are implemented as a Copilot CLI SDK extension, and SDK extensions are discovered from `.github/extensions/` in a repository or from the user extensions folder.
+
+To load the SDK extension from the installed plugin package, use the setup skill from a Copilot CLI session:
+
+```text
+Use the copilot-cost-install skill to enable the Copilot Cost /cost command.
+```
+
+The skill installs a small user-scoped delegate that imports the SDK extension from the plugin install location.
+
+Manual PowerShell fallback:
 
 ```powershell
-$pluginRoot = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Directory -Recurse |
-  Where-Object { Test-Path (Join-Path $_.FullName ".github\extensions\copilot-cli-cost\extension.mjs") } |
+$installer = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Directory -Recurse |
+  Where-Object { Test-Path (Join-Path $_.FullName "scripts\install-extension-shim.mjs") } |
   Select-Object -First 1 -ExpandProperty FullName
 
-if (-not $pluginRoot) {
+if (-not $installer) {
   throw "Could not find installed copilot-cli-cost plugin."
 }
 
-$extensionRoot = "$env:USERPROFILE\.copilot\extensions\copilot-cli-cost"
-New-Item -ItemType Directory -Force $extensionRoot | Out-Null
+node (Join-Path $installer "scripts\install-extension-shim.mjs")
+```
 
-$sourceExtension = Join-Path $pluginRoot ".github\extensions\copilot-cli-cost\extension.mjs"
-$escapedSourceExtension = $sourceExtension.Replace("\", "\\")
-@"
-import { pathToFileURL } from "node:url";
+Manual Bash fallback:
 
-await import(pathToFileURL("$escapedSourceExtension").href);
-"@ | Set-Content -Encoding UTF8 (Join-Path $extensionRoot "extension.mjs")
+```bash
+installer="$(find "$HOME/.copilot/installed-plugins" -type f -path '*/scripts/install-extension-shim.mjs' | head -n 1)"
+if [ -z "$installer" ]; then
+  echo "Could not find installed copilot-cli-cost plugin." >&2
+  exit 1
+fi
+node "$installer"
 ```
 
 In Copilot CLI, run:
