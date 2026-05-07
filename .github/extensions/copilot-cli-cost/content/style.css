@@ -26,6 +26,12 @@ header {
   justify-content: space-between;
 }
 
+.header-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
 h1,
 h2,
 p {
@@ -82,6 +88,10 @@ small {
   border-radius: 10px;
   color: #79c0ff;
   padding: 10px 12px;
+}
+
+.status[hidden] {
+  display: none;
 }
 
 .status.error {

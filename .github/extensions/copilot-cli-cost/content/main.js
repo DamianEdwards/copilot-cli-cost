@@ -11,6 +11,7 @@ const elements = {
   sessionId: document.getElementById("session-id"),
   source: document.getElementById("source"),
   status: document.getElementById("status"),
+  updatedAt: document.getElementById("updated-at"),
   usageSubtitle: document.getElementById("usage-subtitle"),
   usageTotal: document.getElementById("usage-total"),
   whatIfNote: document.getElementById("what-if-note")
@@ -57,6 +58,7 @@ async function refresh() {
   } catch (error) {
     elements.status.textContent = `Unable to read live cost data: ${error.message}`;
     elements.status.className = "status error";
+    elements.status.hidden = false;
   }
 }
 
@@ -73,8 +75,8 @@ function render(data) {
     elements.plan.value = activePlan;
   }
 
-  elements.status.textContent = `Updated ${new Date(data.generatedAt).toLocaleTimeString()}`;
-  elements.status.className = "status";
+  elements.updatedAt.textContent = `Last updated ${new Date(data.generatedAt).toLocaleTimeString()}`;
+  elements.status.hidden = true;
   elements.sessionId.textContent = sessionUsage.sessionId ?? "(unknown)";
   elements.source.textContent = sessionUsage.source ?? data.source ?? "-";
 
