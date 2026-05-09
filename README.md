@@ -177,9 +177,25 @@ The parser reads the latest metrics event and extracts per-model token buckets p
 
 ## Statusline
 
-Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/config.json`:
+Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup.
 
 Windows:
+
+Find the installed wrapper and copy the JSON string printed by the final line:
+
+```powershell
+$statusline = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Recurse -Filter statusline.cmd |
+  Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\statusline.cmd" } |
+  Select-Object -First 1 -ExpandProperty FullName
+
+if (-not $statusline) {
+  throw "Could not find installed copilot-cli-cost statusline.cmd."
+}
+
+$statusline | ConvertTo-Json
+```
+
+Merge these settings, and paste that value into `command`:
 
 ```jsonc
 {
@@ -187,10 +203,15 @@ Windows:
   "experimental_flags": ["STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "%USERPROFILE%\\.copilot\\installed-plugins\\...\\copilot-cli-cost\\scripts\\statusline.cmd"
+    "command": "C:\\Users\\alex\\.copilot\\installed-plugins\\_direct\\DamianEdwards--copilot-cli-cost\\scripts\\statusline.cmd"
+  },
+  "footer": {
+    "showCustom": true
   }
 }
 ```
+
+Use the fully expanded path from your machine. Do not leave `%USERPROFILE%` or `...` in `settings.json`; Copilot CLI validates the command during startup and the command will not render if the path cannot be resolved.
 
 macOS/Linux:
 
@@ -201,6 +222,9 @@ macOS/Linux:
   "statusLine": {
     "type": "command",
     "command": "sh /path/to/installed/copilot-cli-cost/scripts/statusline.sh"
+  },
+  "footer": {
+    "showCustom": true
   }
 }
 ```

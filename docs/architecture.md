@@ -174,9 +174,14 @@ Windows:
   "statusLine": {
     "type": "command",
     "command": "D:\\src\\GitHub\\DamianEdwards\\copilot-cli-cost\\scripts\\statusline.cmd"
+  },
+  "footer": {
+    "showCustom": true
   }
 }
 ```
+
+Put these user settings in `~/.copilot/settings.json`, not the managed `config.json`. The Windows path must be fully expanded before it is pasted; Copilot CLI may remove or move user settings from `config.json` during startup, and the custom footer will not render if the command cannot be resolved.
 
 macOS/Linux:
 
@@ -187,6 +192,9 @@ macOS/Linux:
   "statusLine": {
     "type": "command",
     "command": "sh /path/to/copilot-cli-cost/scripts/statusline.sh"
+  },
+  "footer": {
+    "showCustom": true
   }
 }
 ```
