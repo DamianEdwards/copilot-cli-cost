@@ -106,6 +106,66 @@ In Copilot CLI, run:
 
 Enable `copilot-cli-cost` under **User**. The `/cost` command and panel are available after the extension is running.
 
+### 4. Enable the statusline cost segment
+
+Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup.
+
+Windows:
+
+Find the installed wrapper and copy the JSON string printed by the final line:
+
+```powershell
+$statusline = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Recurse -Filter statusline.cmd |
+  Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\statusline.cmd" } |
+  Select-Object -First 1 -ExpandProperty FullName
+
+if (-not $statusline) {
+  throw "Could not find installed copilot-cli-cost statusline.cmd."
+}
+
+$statusline | ConvertTo-Json
+```
+
+Merge these settings into `~/.copilot/settings.json`, and paste that value into `command`:
+
+```jsonc
+{
+  "experimental": true,
+  "experimental_flags": ["STATUS_LINE"],
+  "statusLine": {
+    "type": "command",
+    "command": "C:\\Users\\alex\\.copilot\\installed-plugins\\_direct\\DamianEdwards--copilot-cli-cost\\scripts\\statusline.cmd"
+  },
+  "footer": {
+    "showCustom": true
+  }
+}
+```
+
+Use the fully expanded path from your machine. Do not leave `%USERPROFILE%` or `...` in `settings.json`; Copilot CLI validates the command during startup and the command will not render if the path cannot be resolved.
+
+macOS/Linux:
+
+```jsonc
+{
+  "experimental": true,
+  "experimental_flags": ["STATUS_LINE"],
+  "statusLine": {
+    "type": "command",
+    "command": "sh /path/to/installed/copilot-cli-cost/scripts/statusline.sh"
+  },
+  "footer": {
+    "showCustom": true
+  }
+}
+```
+
+Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
+
+```text
+💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
+```
+
 ## Use
 
 ```text
@@ -175,67 +235,7 @@ macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 
 The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
 
-## Statusline
-
-Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup.
-
-Windows:
-
-Find the installed wrapper and copy the JSON string printed by the final line:
-
-```powershell
-$statusline = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Recurse -Filter statusline.cmd |
-  Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\statusline.cmd" } |
-  Select-Object -First 1 -ExpandProperty FullName
-
-if (-not $statusline) {
-  throw "Could not find installed copilot-cli-cost statusline.cmd."
-}
-
-$statusline | ConvertTo-Json
-```
-
-Merge these settings, and paste that value into `command`:
-
-```jsonc
-{
-  "experimental": true,
-  "experimental_flags": ["STATUS_LINE"],
-  "statusLine": {
-    "type": "command",
-    "command": "C:\\Users\\alex\\.copilot\\installed-plugins\\_direct\\DamianEdwards--copilot-cli-cost\\scripts\\statusline.cmd"
-  },
-  "footer": {
-    "showCustom": true
-  }
-}
-```
-
-Use the fully expanded path from your machine. Do not leave `%USERPROFILE%` or `...` in `settings.json`; Copilot CLI validates the command during startup and the command will not render if the path cannot be resolved.
-
-macOS/Linux:
-
-```jsonc
-{
-  "experimental": true,
-  "experimental_flags": ["STATUS_LINE"],
-  "statusLine": {
-    "type": "command",
-    "command": "sh /path/to/installed/copilot-cli-cost/scripts/statusline.sh"
-  },
-  "footer": {
-    "showCustom": true
-  }
-}
-```
-
-Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
-
-```text
-💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
-```
-
-### Use another statusline
+## Statusline passthrough
 
 Set `COPILOT_COST_STATUSLINE_PASSTHROUGH` to call another statusline command. The default passthrough mode enriches the stdin JSON with `copilot_cost` and lets the inner statusline render all output.
 
