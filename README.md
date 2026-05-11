@@ -24,54 +24,61 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 ## Install
 
-### 1. Enable experimental Copilot CLI extensions
+Install by executing the install script for your platform.
 
-The `/cost` command and panel use the experimental Copilot CLI SDK extensions feature. In a Copilot CLI session, run:
+Windows PowerShell (`install.ps1`):
 
-```text
-/experimental
+```powershell
+irm https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.ps1 | iex
 ```
 
-Enable experimental mode and the **Extensions** feature if it is listed, then restart Copilot CLI if prompted.
+macOS/Linux (`install.sh`):
 
-If your Copilot CLI version does not show an Extensions option in `/experimental`, add the flag manually in `~/.copilot/config.json`:
-
-```jsonc
-{
-  "experimental": true,
-  "experimental_flags": ["EXTENSIONS"]
-}
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-If you already have `experimental_flags`, add `"EXTENSIONS"` to the existing list instead of replacing it.
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run a local checkout instead:
 
-### 2. Install the plugin from GitHub
+```powershell
+.\install.ps1
+```
 
-Run the following in your shell to install the plugin from the GitHub repository:
+```bash
+./install.sh
+```
+
+The installer:
+
+- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
+- Downloads the installer helper from the raw-content base URL.
+- Installs the user-scoped extension shim for `/cost` and the panel.
+- Enables the Copilot experimental flags needed for extensions and the status line.
+- Configures a stable user-scoped statusline launcher under `~/.copilot/copilot-cli-cost/`.
+
+If you already have a Copilot status line configured, the installer prompts you to replace it, decorate it with the Copilot Cost status line using passthrough mode, or skip statusline configuration. Before changing existing settings that would otherwise be overwritten, it prompts and writes a timestamped `settings.json.bak-*` backup.
+
+Installer options:
+
+| Option | Description |
+| --- | --- |
+| `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
+| `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
+| `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
+
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
+
+If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
+
+### Manual install
+
+The scripts perform these steps. To do them manually, first install the plugin:
 
 ```shell
 copilot plugin install DamianEdwards/copilot-cli-cost
 ```
 
-Verify that the plugin is installed:
-
-```shell
-copilot plugin list
-```
-
-### 3. Enable the deterministic `/cost` command and panel
-
-The plugin install puts the package on disk and makes plugin components such as skills available. The `/cost` command and panel are implemented as a Copilot CLI SDK extension, and SDK extensions are discovered from `.github/extensions/` in a repository or from the user extensions folder.
-
-To load the SDK extension from the installed plugin package, use the setup skill from a Copilot CLI session:
-
-```text
-Use the copilot-cost-install skill to enable the Copilot Cost /cost command.
-```
-
-The skill installs a small user-scoped delegate that imports the SDK extension from the plugin install location.
-
-If you do not want to use the setup skill, paste and run one of these fallback snippets in your terminal after `copilot plugin install` completes. Do not copy these snippets into your repository.
+Then run the extension shim installer from the installed plugin.
 
 PowerShell terminal:
 
@@ -98,61 +105,31 @@ fi
 node "$installer"
 ```
 
-In Copilot CLI, run:
-
-```text
-/extensions
-```
-
-Enable `copilot-cli-cost` under **User**. The `/cost` command and panel are available after the extension is running.
-
-### 4. Enable the statusline cost segment
-
-Copilot CLI can invoke a statusline command with a JSON payload on stdin. Configure this statusline bridge in `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup.
-
-Windows:
-
-Find the installed wrapper and copy the JSON string printed by the final line:
-
-```powershell
-$statusline = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Recurse -Filter statusline.cmd |
-  Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\statusline.cmd" } |
-  Select-Object -First 1 -ExpandProperty FullName
-
-if (-not $statusline) {
-  throw "Could not find installed copilot-cli-cost statusline.cmd."
-}
-
-$statusline | ConvertTo-Json
-```
-
-Merge these settings into `~/.copilot/settings.json`, and paste that value into `command`:
+Configure `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup. Use your machine's statusline launcher path:
 
 ```jsonc
 {
   "experimental": true,
-  "experimental_flags": ["STATUS_LINE"],
+  "experimental_flags": ["EXTENSIONS", "STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "C:\\Users\\alex\\.copilot\\installed-plugins\\_direct\\DamianEdwards--copilot-cli-cost\\scripts\\statusline.cmd"
+    "command": "C:\\Users\\alex\\.copilot\\copilot-cli-cost\\statusline.cmd"
   },
   "footer": {
     "showCustom": true
   }
 }
 ```
-
-Use the fully expanded path from your machine. Do not leave `%USERPROFILE%` or `...` in `settings.json`; Copilot CLI validates the command during startup and the command will not render if the path cannot be resolved.
 
 macOS/Linux:
 
 ```jsonc
 {
   "experimental": true,
-  "experimental_flags": ["STATUS_LINE"],
+  "experimental_flags": ["EXTENSIONS", "STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "sh /path/to/installed/copilot-cli-cost/scripts/statusline.sh"
+    "command": "sh \"/Users/alex/.copilot/copilot-cli-cost/statusline.sh\""
   },
   "footer": {
     "showCustom": true
@@ -160,7 +137,7 @@ macOS/Linux:
 }
 ```
 
-Replace the command path with the installed plugin path on your machine. On macOS/Linux, invoking the wrapper through `sh` avoids relying on executable file metadata. The statusline bridge prints a compact segment:
+The statusline bridge prints a compact segment:
 
 ```text
 💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out

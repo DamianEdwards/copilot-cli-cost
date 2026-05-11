@@ -8,8 +8,9 @@ const extensionName = "copilot-cli-cost";
 const extensionRelativePath = path.join(".github", "extensions", extensionName, "extension.mjs");
 
 try {
-  const sourceExtension = findInstalledExtension();
-  const targetDirectory = path.join(os.homedir(), ".copilot", "extensions", extensionName);
+  const copilotHome = readCopilotHome(process.argv.slice(2));
+  const sourceExtension = findInstalledExtension(copilotHome);
+  const targetDirectory = path.join(copilotHome, "extensions", extensionName);
   const targetExtension = path.join(targetDirectory, "extension.mjs");
   const content = `import { pathToFileURL } from "node:url";\n\nawait import(pathToFileURL(${JSON.stringify(sourceExtension)}).href);\n`;
 
@@ -33,8 +34,21 @@ try {
   process.exitCode = 1;
 }
 
-function findInstalledExtension() {
-  const installedPluginsDirectory = path.join(os.homedir(), ".copilot", "installed-plugins");
+function readCopilotHome(argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === "--copilot-home") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--copilot-home requires a value.");
+      }
+      return path.resolve(value);
+    }
+  }
+  return path.resolve(process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot"));
+}
+
+function findInstalledExtension(copilotHome) {
+  const installedPluginsDirectory = path.join(copilotHome, "installed-plugins");
   const matches = findFiles(installedPluginsDirectory, path.basename(extensionRelativePath))
     .filter((file) => path.normalize(file).endsWith(extensionRelativePath));
 

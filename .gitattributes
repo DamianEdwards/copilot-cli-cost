@@ -1,1 +1,2 @@
+install.sh text eol=lf
 scripts/statusline.sh text eol=lf
