@@ -38,6 +38,16 @@ macOS/Linux:
 ./install.sh
 ```
 
+Remote one-line install:
+
+```powershell
+irm https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.ps1 | iex
+```
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
+```
+
 The installer:
 
 - Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
@@ -54,7 +64,7 @@ Installer options:
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
 
-Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source.
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
 

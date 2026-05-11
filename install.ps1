@@ -1,11 +1,13 @@
 [CmdletBinding()]
 param(
   [string]$PluginSource = $(if ($env:COPILOT_COST_PLUGIN_SOURCE) { $env:COPILOT_COST_PLUGIN_SOURCE } else { "DamianEdwards/copilot-cli-cost" }),
+  [string]$InstallBaseUrl = $(if ($env:COPILOT_COST_INSTALL_BASE_URL) { $env:COPILOT_COST_INSTALL_BASE_URL } else { "https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main" }),
   [switch]$SkipStatusLine,
   [switch]$Yes
 )
 
 $ErrorActionPreference = "Stop"
+$temporaryConfigureDirectory = $null
 
 function Require-Command {
   param([string]$Name)
@@ -34,6 +36,28 @@ function Get-UserHome {
   return [Environment]::GetFolderPath("UserProfile")
 }
 
+function Get-ConfigureScript {
+  $localConfigureScript = $null
+  if ($PSScriptRoot) {
+    $localConfigureScript = Join-Path $PSScriptRoot "scripts\configure-install.mjs"
+  }
+
+  if ($localConfigureScript -and (Test-Path $localConfigureScript)) {
+    return $localConfigureScript
+  }
+
+  $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "copilot-cli-cost-install-$([guid]::NewGuid())"
+  $script:temporaryConfigureDirectory = $temporaryDirectory
+  New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+  $remoteConfigureScript = Join-Path $temporaryDirectory "configure-install.mjs"
+  $remoteUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/configure-install.mjs"
+
+  Write-Host "Downloading installer helper from $remoteUrl..."
+  Invoke-WebRequest -Uri $remoteUrl -OutFile $remoteConfigureScript
+
+  return $remoteConfigureScript
+}
+
 Require-Command "copilot"
 Require-Command "node"
 
@@ -60,7 +84,7 @@ if (-not $installer) {
 Write-Host "Installing Copilot Cost extension shim..."
 Invoke-Checked "node" @($installer.FullName)
 
-$configureScript = Join-Path $PSScriptRoot "scripts\configure-install.mjs"
+$configureScript = Get-ConfigureScript
 $configureArgs = @($configureScript, "--platform", "windows")
 if ($SkipStatusLine) {
   $configureArgs += "--skip-statusline"
@@ -71,6 +95,9 @@ if ($Yes) {
 
 Write-Host "Configuring Copilot experimental features and status line..."
 Invoke-Checked "node" $configureArgs
+if ($temporaryConfigureDirectory -and (Test-Path $temporaryConfigureDirectory)) {
+  Remove-Item -Recurse -Force $temporaryConfigureDirectory
+}
 
 Write-Host ""
 Write-Host "Install complete. If /cost is not available in an active Copilot CLI session, run /extensions and enable copilot-cli-cost under User."
