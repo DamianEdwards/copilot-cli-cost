@@ -298,7 +298,7 @@ installed_root=${singleQuote(installedPluginsDirectory)}
 if [ ! -d "$installed_root" ]; then
   exit 0
 fi
-statusline="$(find "$installed_root" -type f -path '*/copilot-cli-cost*/scripts/statusline.sh' 2>/dev/null | sort | head -n 1)"
+statusline="$(find "$installed_root" -type f -path '*copilot-cli-cost*/scripts/statusline.sh' 2>/dev/null | sort | head -n 1)"
 if [ -z "$statusline" ]; then
   exit 0
 fi

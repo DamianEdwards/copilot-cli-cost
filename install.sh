@@ -4,6 +4,8 @@ set -euo pipefail
 plugin_source="${COPILOT_COST_PLUGIN_SOURCE:-DamianEdwards/copilot-cli-cost}"
 install_base_url="${COPILOT_COST_INSTALL_BASE_URL:-https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main}"
 copilot_home="${COPILOT_HOME:-${HOME}/.copilot}"
+configure_script=""
+configure_temp_dir=""
 skip_statusline=0
 assume_yes=0
 
@@ -83,14 +85,13 @@ download_file() {
 }
 
 get_configure_script() {
-  temp_dir="$(mktemp -d)"
-  trap 'rm -rf "$temp_dir"' EXIT
-  remote_configure_script="${temp_dir}/configure-install.mjs"
+  configure_temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$configure_temp_dir"' EXIT
+  configure_script="${configure_temp_dir}/configure-install.mjs"
   remote_url="${install_base_url%/}/scripts/configure-install.mjs"
 
   echo "Downloading installer helper from ${remote_url}..." >&2
-  download_file "$remote_url" "$remote_configure_script"
-  echo "$remote_configure_script"
+  download_file "$remote_url" "$configure_script"
 }
 
 case "$copilot_home" in
@@ -111,7 +112,7 @@ else
 fi
 
 installer="$(
-  find "$installed_plugins" -type f -path '*/copilot-cli-cost*/scripts/install-extension-shim.mjs' 2>/dev/null |
+  find "$installed_plugins" -type f -path '*copilot-cli-cost*/scripts/install-extension-shim.mjs' 2>/dev/null |
     sort |
     head -n 1
 )"
@@ -124,7 +125,7 @@ fi
 echo "Installing Copilot Cost extension shim..."
 node "$installer" --copilot-home "$copilot_home"
 
-configure_script="$(get_configure_script)"
+get_configure_script
 configure_args=("$configure_script" "--platform" "posix" "--copilot-home" "$copilot_home")
 if [ "$skip_statusline" -eq 1 ]; then
   configure_args+=("--skip-statusline")
