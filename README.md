@@ -24,7 +24,7 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 ## Install
 
-Install by executing the platform install script directly from the `main` branch.
+Install by executing the install script for your platform.
 
 Windows PowerShell (`install.ps1`):
 
@@ -52,7 +52,7 @@ The installer:
 
 - Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
 - Downloads the installer helper from the raw-content base URL.
-- Installs the user-scoped SDK extension shim for `/cost` and the panel.
+- Installs the user-scoped extension shim for `/cost` and the panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
 - Configures a stable user-scoped statusline launcher under `~/.copilot/copilot-cli-cost/`.
 
