@@ -15,15 +15,15 @@ main().catch((error) => {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const homeDirectory = os.homedir();
-  const settingsPath = args.settingsPath ?? path.join(homeDirectory, ".copilot", "settings.json");
-  const launcherDirectory = args.launcherDirectory ?? path.join(homeDirectory, ".copilot", "copilot-cli-cost");
+  const copilotHome = args.copilotHome ?? path.join(os.homedir(), ".copilot");
+  const settingsPath = args.settingsPath ?? path.join(copilotHome, "settings.json");
+  const launcherDirectory = args.launcherDirectory ?? path.join(copilotHome, "copilot-cli-cost");
   const prompt = createPrompter(args);
 
   const { settings, existed, jsonc } = readSettings(settingsPath);
   let settingsChanged = false;
 
-  const launcherPath = await ensureStatusLineLauncher(args.platform, launcherDirectory, prompt);
+  const launcherPath = await ensureStatusLineLauncher(args.platform, launcherDirectory, prompt, copilotHome);
   const statusLineCommand = launcherPath ? makeStatusLineCommand(args.platform, launcherPath) : undefined;
 
   settingsChanged = await enableExperimentalSettings(settings, prompt) || settingsChanged;
@@ -74,6 +74,9 @@ function parseArgs(argv) {
     switch (arg) {
       case "--launcher-directory":
         args.launcherDirectory = readValue(argv, ++index, arg);
+        break;
+      case "--copilot-home":
+        args.copilotHome = path.resolve(readValue(argv, ++index, arg));
         break;
       case "--platform":
         args.platform = readValue(argv, ++index, arg);
@@ -246,7 +249,7 @@ function stripTrailingCommas(input) {
   return { changed, text: output };
 }
 
-async function ensureStatusLineLauncher(platform, launcherDirectory, prompt) {
+async function ensureStatusLineLauncher(platform, launcherDirectory, prompt, copilotHome) {
   if (fs.existsSync(launcherDirectory) && !fs.statSync(launcherDirectory).isDirectory()) {
     const replace = await prompt.confirm(
       `${launcherDirectory} exists but is not a directory. Replace it with a directory for Copilot Cost launchers?`,
@@ -261,16 +264,17 @@ async function ensureStatusLineLauncher(platform, launcherDirectory, prompt) {
   fs.mkdirSync(launcherDirectory, { recursive: true });
 
   const launcherPath = path.join(launcherDirectory, platform === "windows" ? "statusline.cmd" : "statusline.sh");
-  const content = platform === "windows" ? windowsLauncherContent() : posixLauncherContent();
+  const content = platform === "windows" ? windowsLauncherContent(copilotHome) : posixLauncherContent(copilotHome);
   const available = await writeGeneratedFile(launcherPath, content, prompt, platform === "posix");
   return available ? launcherPath : undefined;
 }
 
-function windowsLauncherContent() {
+function windowsLauncherContent(copilotHome) {
+  const installedPluginsDirectory = path.join(copilotHome, "installed-plugins");
   return `@echo off
 rem ${generatedMarker}
 setlocal EnableExtensions
-set "installedRoot=%USERPROFILE%\\.copilot\\installed-plugins"
+set "installedRoot=${escapeBatchSetValue(installedPluginsDirectory)}"
 if not exist "%installedRoot%" exit /b 0
 set "statusline="
 for /f "delims=" %%F in ('where /r "%installedRoot%" statusline.cmd 2^>nul ^| sort') do (
@@ -286,10 +290,11 @@ call "%statusline%" %*
 `;
 }
 
-function posixLauncherContent() {
+function posixLauncherContent(copilotHome) {
+  const installedPluginsDirectory = path.join(copilotHome, "installed-plugins");
   return `#!/usr/bin/env sh
 # ${generatedMarker}
-installed_root="\${HOME}/.copilot/installed-plugins"
+installed_root=${singleQuote(installedPluginsDirectory)}
 if [ ! -d "$installed_root" ]; then
   exit 0
 fi

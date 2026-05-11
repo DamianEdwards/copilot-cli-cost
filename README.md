@@ -62,10 +62,11 @@ Installer options:
 
 | Option | Description |
 | --- | --- |
+| `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
 
-Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location.
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
 

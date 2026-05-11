@@ -2,6 +2,8 @@
 param(
   [string]$PluginSource = $(if ($env:COPILOT_COST_PLUGIN_SOURCE) { $env:COPILOT_COST_PLUGIN_SOURCE } else { "DamianEdwards/copilot-cli-cost" }),
   [string]$InstallBaseUrl = $(if ($env:COPILOT_COST_INSTALL_BASE_URL) { $env:COPILOT_COST_INSTALL_BASE_URL } else { "https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main" }),
+  [Alias("CopilotHome")]
+  [string]$CopilotHomePath = $(if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { "" }),
   [switch]$SkipStatusLine,
   [switch]$Yes
 )
@@ -49,46 +51,59 @@ function Get-ConfigureScript {
   return $remoteConfigureScript
 }
 
-Require-Command "copilot"
-Require-Command "node"
+$previousCopilotHome = $env:COPILOT_HOME
+try {
+  Require-Command "copilot"
+  Require-Command "node"
 
-$userHome = Get-UserHome
-$installedPlugins = Join-Path $userHome ".copilot\installed-plugins"
+  if (-not $CopilotHomePath) {
+    $CopilotHomePath = Join-Path (Get-UserHome) ".copilot"
+  }
+  $resolvedCopilotHome = [System.IO.Path]::GetFullPath($CopilotHomePath)
+  $env:COPILOT_HOME = $resolvedCopilotHome
+  $installedPlugins = Join-Path $resolvedCopilotHome "installed-plugins"
 
-Write-Host "Installing Copilot CLI Cost plugin from $PluginSource..."
-$pluginList = (& copilot plugin list 2>$null) -join "`n"
-if ($pluginList -match "(?i)\bcopilot-cli-cost\b") {
-  Write-Host "Copilot CLI Cost plugin is already installed."
-} else {
-  Invoke-Checked "copilot" @("plugin", "install", $PluginSource)
+  Write-Host "Installing Copilot CLI Cost plugin from $PluginSource..."
+  $pluginList = (& copilot plugin list 2>$null) -join "`n"
+  if ($pluginList -match "(?i)\bcopilot-cli-cost\b") {
+    Write-Host "Copilot CLI Cost plugin is already installed."
+  } else {
+    Invoke-Checked "copilot" @("plugin", "install", $PluginSource)
+  }
+
+  $installer = Get-ChildItem $installedPlugins -Recurse -Filter "install-extension-shim.mjs" -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\install-extension-shim.mjs" } |
+    Sort-Object FullName |
+    Select-Object -First 1
+
+  if (-not $installer) {
+    throw "Could not find the installed copilot-cli-cost plugin under $installedPlugins."
+  }
+
+  Write-Host "Installing Copilot Cost extension shim..."
+  Invoke-Checked "node" @($installer.FullName, "--copilot-home", $resolvedCopilotHome)
+
+  $configureScript = Get-ConfigureScript
+  $configureArgs = @($configureScript, "--platform", "windows", "--copilot-home", $resolvedCopilotHome)
+  if ($SkipStatusLine) {
+    $configureArgs += "--skip-statusline"
+  }
+  if ($Yes) {
+    $configureArgs += "--yes"
+  }
+
+  Write-Host "Configuring Copilot experimental features and status line..."
+  Invoke-Checked "node" $configureArgs
+
+  Write-Host ""
+  Write-Host "Install complete. If /cost is not available in an active Copilot CLI session, run /extensions and enable copilot-cli-cost under User."
+} finally {
+  if ($temporaryConfigureDirectory -and (Test-Path $temporaryConfigureDirectory)) {
+    Remove-Item -Recurse -Force $temporaryConfigureDirectory
+  }
+  if ($null -eq $previousCopilotHome) {
+    Remove-Item Env:COPILOT_HOME -ErrorAction SilentlyContinue
+  } else {
+    $env:COPILOT_HOME = $previousCopilotHome
+  }
 }
-
-$installer = Get-ChildItem $installedPlugins -Recurse -Filter "install-extension-shim.mjs" -File -ErrorAction SilentlyContinue |
-  Where-Object { $_.FullName -like "*copilot-cli-cost*scripts\install-extension-shim.mjs" } |
-  Sort-Object FullName |
-  Select-Object -First 1
-
-if (-not $installer) {
-  throw "Could not find the installed copilot-cli-cost plugin under $installedPlugins."
-}
-
-Write-Host "Installing Copilot Cost extension shim..."
-Invoke-Checked "node" @($installer.FullName)
-
-$configureScript = Get-ConfigureScript
-$configureArgs = @($configureScript, "--platform", "windows")
-if ($SkipStatusLine) {
-  $configureArgs += "--skip-statusline"
-}
-if ($Yes) {
-  $configureArgs += "--yes"
-}
-
-Write-Host "Configuring Copilot experimental features and status line..."
-Invoke-Checked "node" $configureArgs
-if ($temporaryConfigureDirectory -and (Test-Path $temporaryConfigureDirectory)) {
-  Remove-Item -Recurse -Force $temporaryConfigureDirectory
-}
-
-Write-Host ""
-Write-Host "Install complete. If /cost is not available in an active Copilot CLI session, run /extensions and enable copilot-cli-cost under User."
