@@ -37,15 +37,6 @@ function Get-UserHome {
 }
 
 function Get-ConfigureScript {
-  $localConfigureScript = $null
-  if ($PSScriptRoot) {
-    $localConfigureScript = Join-Path $PSScriptRoot "scripts\configure-install.mjs"
-  }
-
-  if ($localConfigureScript -and (Test-Path $localConfigureScript)) {
-    return $localConfigureScript
-  }
-
   $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "copilot-cli-cost-install-$([guid]::NewGuid())"
   $script:temporaryConfigureDirectory = $temporaryDirectory
   New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null

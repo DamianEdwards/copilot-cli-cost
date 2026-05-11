@@ -74,12 +74,6 @@ download_file() {
 }
 
 get_configure_script() {
-  local_configure_script="${script_dir}/scripts/configure-install.mjs"
-  if [ -f "$local_configure_script" ]; then
-    echo "$local_configure_script"
-    return
-  fi
-
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
   remote_configure_script="${temp_dir}/configure-install.mjs"
@@ -90,7 +84,6 @@ get_configure_script() {
   echo "$remote_configure_script"
 }
 
-script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 installed_plugins="${HOME}/.copilot/installed-plugins"
 
 require_command copilot
