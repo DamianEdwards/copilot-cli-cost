@@ -24,21 +24,21 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 ## Install
 
-Run the remote one-line installer for your shell.
+Install by executing the platform install script directly from the `main` branch.
 
-Windows PowerShell:
+Windows PowerShell (`install.ps1`):
 
 ```powershell
 irm https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.ps1 | iex
 ```
 
-macOS/Linux:
+macOS/Linux (`install.sh`):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-Downloaded installers run in isolation and always fetch their helper from the raw-content base URL before configuring Copilot. To run a local checkout instead:
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run a local checkout instead:
 
 ```powershell
 .\install.ps1
