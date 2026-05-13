@@ -160,7 +160,10 @@ async function refresh({ reloadSessions = false } = {}) {
 function render(data) {
   const usageBased = data.usageBased;
   const premiumRequests = data.premiumRequests;
+  const aggregateUsageBased = data.aggregateUsageBased;
+  const aggregatePremiumRequests = data.aggregatePremiumRequests;
   const sessionUsage = data.sessionUsage ?? {};
+  const isResumed = sessionUsage.logicalSession?.isResumed === true;
   const currentSubscription = data.currentSubscription ?? inferCurrentSubscription(data);
   const currentPlan = currentSubscription?.plan;
   const activePlan = selectedPlan ?? usageBased?.plan ?? premiumRequests?.plan ?? currentPlan;
@@ -173,7 +176,9 @@ function render(data) {
   elements.updatedAt.textContent = `Last updated ${new Date(data.generatedAt).toLocaleTimeString()}`;
   elements.status.hidden = true;
   elements.sessionId.textContent = sessionUsage.sessionId ?? "(unknown)";
-  elements.source.textContent = sessionUsage.source ?? data.source ?? "-";
+  elements.source.textContent = isResumed
+    ? `resumed logical session · ${sessionUsage.logicalSession.instanceCount} instances`
+    : sessionUsage.source ?? data.source ?? "-";
   syncSelectedSessionFromData(data);
   renderSessionPicker();
 
@@ -183,8 +188,13 @@ function render(data) {
   } else {
     const usagePlan = selectedPlan ?? usageBased.plan;
     const includedAiCreditAllotment = readAiCreditAllotment(usageBased, usagePlan);
-    elements.usageTotal.textContent = formatCurrency(usageBased.displayTotal, usageBased.currency.code);
-    elements.usageSubtitle.textContent = `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatAiCreditAllotment(includedAiCreditAllotment)} · ${usagePlan}`;
+    const displayedUsage = isResumed && aggregateUsageBased && !aggregateUsageBased.error
+      ? aggregateUsageBased
+      : usageBased;
+    elements.usageTotal.textContent = formatCurrency(displayedUsage.displayTotal, displayedUsage.currency.code);
+    elements.usageSubtitle.textContent = isResumed && displayedUsage === aggregateUsageBased
+      ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${usagePlan}`
+      : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatAiCreditAllotment(includedAiCreditAllotment)} · ${usagePlan}`;
   }
 
   if (premiumRequests?.error) {
@@ -193,8 +203,13 @@ function render(data) {
   } else {
     const pruPlan = selectedPlan ?? premiumRequests.plan;
     const includedPremiumRequests = planAllowances[pruPlan]?.premiumRequests ?? premiumRequests.includedPremiumRequests;
-    elements.pruTotal.textContent = `${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU`;
-    elements.pruSubtitle.textContent = `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${formatNumber(includedPremiumRequests, 0)} included · ${pruPlan}`;
+    const displayedPremiumRequests = isResumed && aggregatePremiumRequests && !aggregatePremiumRequests.error
+      ? aggregatePremiumRequests
+      : premiumRequests;
+    elements.pruTotal.textContent = `${formatNumber(displayedPremiumRequests.totalPremiumRequests, 2)} PRU`;
+    elements.pruSubtitle.textContent = isResumed && displayedPremiumRequests === aggregatePremiumRequests
+      ? `logical total · this instance ${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU · ${formatCurrency(displayedPremiumRequests.displayOverageEquivalent, displayedPremiumRequests.currency.code)} overage-equivalent · ${pruPlan}`
+      : `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${formatNumber(includedPremiumRequests, 0)} included · ${pruPlan}`;
   }
 
   renderBreakdown(usageBased);

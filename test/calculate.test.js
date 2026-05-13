@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 import { getAppCacheDirectory } from "../src/core/app-cache-dir.js";
 import { calculateSessionCost } from "../src/core/calculate.js";
 import { getFxRateCacheDirectory, getUsdExchangeRate } from "../src/core/fx-rates.js";
-import { getLiveSessionStoreDirectory, listLiveSessions, writeLiveSession } from "../src/core/live-session-store.js";
-import { listCompletedSessionSummaries, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../src/core/session-events.js";
+import { getLiveSessionStoreDirectory, listLiveSessions, readLiveSession, writeLiveSession } from "../src/core/live-session-store.js";
+import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
-import { usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
+import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
 
 const sessionUsage = {
   sessionId: "test-session",
@@ -593,6 +593,53 @@ test("calculates usage-based billing from Copilot CLI event metrics", () => {
   assert.equal(result.modelBreakdown[0].reasoningUsd, 0);
 });
 
+test("can read richest Copilot CLI event metrics when later resume metrics reset", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const eventsPath = path.join(storeDirectory, "events.jsonl");
+  try {
+    fs.writeFileSync(eventsPath, [
+      JSON.stringify({
+        type: "session.shutdown",
+        timestamp: "2026-05-13T18:00:00.000Z",
+        data: {
+          totalPremiumRequests: 7.5,
+          currentModel: "gpt-5.5",
+          modelMetrics: {
+            "gpt-5.5": {
+              requests: { count: 1, cost: 7.5 },
+              usage: {
+                inputTokens: 1000,
+                cacheReadTokens: 750,
+                outputTokens: 100
+              }
+            }
+          }
+        }
+      }),
+      JSON.stringify({
+        type: "session.shutdown",
+        timestamp: "2026-05-13T20:00:00.000Z",
+        data: {
+          totalPremiumRequests: 0,
+          currentModel: "gpt-5.5",
+          modelMetrics: {}
+        }
+      })
+    ].join("\n"));
+
+    const latest = readSessionUsageFromEvents("resumed-events", { eventsPath });
+    const richest = readRichestSessionUsageFromEvents("resumed-events", { eventsPath });
+
+    assert.equal(latest.modelUsage.length, 0);
+    assert.equal(latest.premiumRequests, 0);
+    assert.equal(richest.modelUsage[0].inputTokens, 1000);
+    assert.equal(richest.premiumRequests, 7.5);
+    assert.equal(richest.metricsStale, true);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
 test("normalizes Copilot CLI statusline payloads", () => {
   const payload = readFixture("statusline-payload.sample.json");
   const usage = statusLinePayloadToSessionUsage(payload);
@@ -647,6 +694,38 @@ test("normalizes Copilot CLI usage.getMetrics results", () => {
   assert.equal(usage.modelUsage[0].reasoningTokens, 335);
 });
 
+test("preserves prior usage when live RPC counters reset after resume", () => {
+  const previous = {
+    sessionId: "resumed-rpc-session",
+    source: "copilot-cli-statusline",
+    timestamp: "2026-05-13T18:00:00.000Z",
+    premiumRequests: 7.5,
+    modelUsage: [
+      {
+        model: "gpt-5.5",
+        inputTokens: 135659,
+        cachedInputTokens: 91648,
+        cacheWriteTokens: 12000,
+        outputTokens: 1333,
+        reasoningTokens: 335
+      }
+    ]
+  };
+  const current = usageMetricsToSessionUsage("resumed-rpc-session", {
+    totalPremiumRequestCost: 0,
+    currentModel: "gpt-5.5",
+    modelMetrics: {}
+  });
+
+  const merged = mergeResumedSessionUsage(current, previous);
+
+  assert.equal(merged.logicalSession.isResumed, true);
+  assert.equal(merged.logicalSession.resetCount, 1);
+  assert.equal(merged.aggregateUsage.premiumRequests, 7.5);
+  assert.equal(merged.aggregateUsage.modelUsage[0].inputTokens, 135659);
+  assert.equal(merged.modelUsage.length, 0);
+});
+
 test("merges statusline cumulative-token deltas by active model", () => {
   const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
   try {
@@ -670,6 +749,160 @@ test("merges statusline cumulative-token deltas by active model", () => {
     assert.equal(sonnetUsage.cachedInputTokens, 300);
     assert.equal(sonnetUsage.cacheWriteTokens, 400);
     assert.equal(sonnetUsage.reasoningTokens, 50);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("aggregates resumed statusline instances by transcript path", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const first = readFixture("statusline-payload.sample.json");
+    first.session_id = "resumed-instance-1";
+    first.transcript_path = "D:\\TEST\\.copilot\\transcripts\\conversation.jsonl";
+    mergeStatusLinePayload(first, { storeDirectory });
+
+    const second = structuredClone(first);
+    second.session_id = "resumed-instance-2";
+    second.cost.total_premium_requests = 2.5;
+    second.context_window.total_input_tokens = 50000;
+    second.context_window.total_output_tokens = 500;
+    second.context_window.total_cache_read_tokens = 10000;
+    second.context_window.total_cache_write_tokens = 2000;
+    second.context_window.total_reasoning_tokens = 20;
+
+    const resumed = mergeStatusLinePayload(second, { storeDirectory }).sessionUsage;
+    assert.equal(resumed.sessionId, "resumed-instance-2");
+    assert.equal(resumed.logicalSession.isResumed, true);
+    assert.equal(resumed.logicalSession.instanceCount, 2);
+    assert.equal(resumed.modelUsage[0].inputTokens, 50000);
+    assert.equal(resumed.aggregateUsage.modelUsage[0].inputTokens, 185659);
+    assert.equal(resumed.aggregateUsage.modelUsage[0].outputTokens, 1833);
+    assert.equal(resumed.aggregateUsage.premiumRequests, 10);
+
+    const refreshed = structuredClone(second);
+    refreshed.cost.total_premium_requests = 3;
+    refreshed.context_window.total_input_tokens += 1000;
+    const refreshedUsage = mergeStatusLinePayload(refreshed, { storeDirectory }).sessionUsage;
+
+    assert.equal(refreshedUsage.modelUsage[0].inputTokens, 51000);
+    assert.equal(refreshedUsage.aggregateUsage.modelUsage[0].inputTokens, 186659);
+    assert.equal(refreshedUsage.aggregateUsage.premiumRequests, 10.5);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("does not double-count cumulative premium requests across resumed statusline instances", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const first = readFixture("statusline-payload.sample.json");
+    first.session_id = "cumulative-pru-instance-1";
+    first.transcript_path = "D:\\TEST\\.copilot\\transcripts\\cumulative-pru.jsonl";
+    mergeStatusLinePayload(first, { storeDirectory });
+
+    const second = structuredClone(first);
+    second.session_id = "cumulative-pru-instance-2";
+    second.cost.total_premium_requests = 8;
+    second.context_window.total_input_tokens = 50000;
+    second.context_window.total_output_tokens = 500;
+    second.context_window.total_cache_read_tokens = 10000;
+    second.context_window.total_cache_write_tokens = 2000;
+    second.context_window.total_reasoning_tokens = 20;
+
+    const usage = mergeStatusLinePayload(second, { storeDirectory }).sessionUsage;
+
+    assert.equal(usage.aggregateUsage.premiumRequests, 8);
+    assert.equal(usage.logicalSession.premiumRequestsAggregation.mode, "latest-cumulative");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("preserves prior contribution when statusline counters reset within one instance", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const first = readFixture("statusline-payload.sample.json");
+    first.session_id = "reset-instance";
+    first.transcript_path = "D:\\TEST\\.copilot\\transcripts\\reset.jsonl";
+    mergeStatusLinePayload(first, { storeDirectory });
+
+    const reset = structuredClone(first);
+    reset.context_window.total_input_tokens = 100;
+    reset.context_window.total_output_tokens = 10;
+    reset.context_window.total_cache_read_tokens = 20;
+    reset.context_window.total_cache_write_tokens = 5;
+    reset.context_window.total_reasoning_tokens = 1;
+    reset.cost.total_premium_requests = 1;
+
+    const usage = mergeStatusLinePayload(reset, { storeDirectory }).sessionUsage;
+    const cached = readLiveSession("reset-instance", { storeDirectory });
+
+    assert.equal(usage.logicalSession.resetCount, 1);
+    assert.equal(cached.aggregateUsage.modelUsage[0].inputTokens, 135759);
+    assert.equal(cached.aggregateUsage.premiumRequests, 8.5);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline preserves resumed aggregate when current payload is zero", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    writeLiveSession({
+      sessionId: "zero-statusline-resume",
+      source: "copilot-cli-rpc-usage",
+      timestamp: "2026-05-13T20:00:00.000Z",
+      premiumRequests: 0,
+      modelUsage: [],
+      logicalSession: {
+        id: "session:zero-statusline-resume",
+        source: "session_id",
+        key: "zero-statusline-resume",
+        currentInstanceId: "zero-statusline-resume",
+        isResumed: true,
+        instanceCount: 1,
+        resumeCount: 1,
+        resetCount: 1
+      },
+      aggregateUsage: {
+        sessionId: "session:zero-statusline-resume",
+        source: "copilot-cli-resumed-session-aggregate",
+        timestamp: "2026-05-13T20:00:00.000Z",
+        premiumRequests: 7.5,
+        modelUsage: [
+          {
+            model: "gpt-5.5",
+            inputTokens: 135659,
+            cachedInputTokens: 91648,
+            cacheWriteTokens: 12000,
+            outputTokens: 1333,
+            reasoningTokens: 335
+          }
+        ]
+      }
+    }, { storeDirectory });
+
+    const payload = readFixture("statusline-payload.sample.json");
+    payload.session_id = "zero-statusline-resume";
+    payload.cost.total_premium_requests = 0;
+    payload.context_window.total_input_tokens = 0;
+    payload.context_window.total_output_tokens = 0;
+    payload.context_window.total_cache_read_tokens = 0;
+    payload.context_window.total_cache_write_tokens = 0;
+    payload.context_window.total_reasoning_tokens = 0;
+
+    const usage = mergeStatusLinePayload(payload, { storeDirectory }).sessionUsage;
+
+    assert.equal(usage.logicalSession.isResumed, true);
+    assert.equal(usage.aggregateUsage.modelUsage[0].inputTokens, 135659);
+    assert.equal(usage.aggregateUsage.premiumRequests, 7.5);
+    assert.equal(usage.modelUsage[0].inputTokens, 0);
+
+    const refreshed = mergeStatusLinePayload(payload, { storeDirectory }).sessionUsage;
+    assert.equal(refreshed.logicalSession.isResumed, true);
+    assert.equal(refreshed.aggregateUsage.modelUsage[0].inputTokens, 135659);
+    assert.equal(refreshed.aggregateUsage.premiumRequests, 7.5);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -746,6 +979,38 @@ test("statusline CLI can decorate passthrough statusline output", () => {
     assert.match(result.stdout, /^base gpt-5\.5 · 💸 Cost /);
     assert.match(result.stdout, /~\$0\.3059 \(30\.6 cr\)/);
     assert.match(result.stdout, /7\.5 PRU/);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline launcher prefers copilot-cli-cost checkout from payload cwd", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const workspace = path.join(storeDirectory, "workspace");
+    const statuslineDirectory = path.join(workspace, "src", "cli");
+    fs.mkdirSync(statuslineDirectory, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({ name: "copilot-cli-cost" }));
+    fs.writeFileSync(
+      path.join(statuslineDirectory, "statusline.js"),
+      "import fs from 'node:fs'; const payload = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(`workspace ${payload.cwd}`);"
+    );
+
+    const payload = readFixture("statusline-payload.sample.json");
+    payload.cwd = workspace;
+    payload.workspace.current_dir = workspace;
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("../scripts/statusline-launcher.mjs", import.meta.url))],
+      {
+        encoding: "utf8",
+        input: JSON.stringify(payload),
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, `workspace ${workspace}`);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }

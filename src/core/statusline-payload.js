@@ -1,5 +1,13 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
-import { getLiveSessionPath, readLiveSession, writeLiveSession } from "./live-session-store.js";
+import {
+  getLiveSessionPath,
+  readLiveSession,
+  registerLogicalSessionInstance,
+  writeLiveSession
+} from "./live-session-store.js";
+import { readRichestSessionUsageFromEvents } from "./session-events.js";
+import { mergeResumedSessionUsage } from "./usage-metrics.js";
 
 const TOKEN_TOTAL_FIELDS = Object.freeze({
   inputTokens: "total_input_tokens",
@@ -75,34 +83,299 @@ export function mergeStatusLinePayload(payload, options = {}) {
   const previous = fs.existsSync(previousPath)
     ? readLiveSession(snapshot.sessionId, options)
     : null;
+  const logicalSession = resolveLogicalSession(snapshot, previous);
 
+  let sessionUsage;
+  let wasReset;
   if (!previous || previous.source !== "copilot-cli-statusline" || !previous.lastContextTotals) {
-    const paths = writeLiveSession(snapshot, options);
-    return { sessionUsage: snapshot, paths, wasReset: true };
+    const resumedUsage = mergeResumedSessionUsage(snapshot, readPreviousUsageForResume(snapshot.sessionId, previous, options));
+    sessionUsage = resumedUsage.logicalSession?.isResumed
+      ? withResumeLogicalSession(resumedUsage, logicalSession)
+      : withLogicalSession(snapshot, logicalSession);
+    wasReset = true;
+  } else {
+    const currentTotals = snapshot.lastContextTotals;
+    const previousTotals = previous.lastContextTotals;
+    if (hasCounterReset(currentTotals, previousTotals)) {
+      sessionUsage = withLogicalSession(snapshot, logicalSession, {
+        frozenContributions: [
+          ...readFrozenContributions(previous),
+          toFrozenContribution(previous)
+        ]
+      });
+      wasReset = true;
+    } else {
+      const delta = subtractTotals(currentTotals, previousTotals);
+      const modelUsage = addDeltaToModel(previous.modelUsage ?? [], snapshot.currentModel, delta);
+      const merged = {
+        ...previous,
+        ...snapshot,
+        modelUsage,
+        lastContextTotals: currentTotals,
+        attribution: {
+          mode: "delta-by-active-model",
+          note: "Successive statusline cumulative-token deltas are attributed to the active model for that refresh."
+        }
+      };
+      sessionUsage = withLogicalSession(merged, logicalSession, {
+        frozenContributions: readFrozenContributions(previous)
+      });
+      wasReset = false;
+    }
   }
 
-  const currentTotals = snapshot.lastContextTotals;
-  const previousTotals = previous.lastContextTotals;
-  if (hasCounterReset(currentTotals, previousTotals)) {
-    const paths = writeLiveSession(snapshot, options);
-    return { sessionUsage: snapshot, paths, wasReset: true };
+  writeLiveSession(sessionUsage, options);
+  const index = registerLogicalSessionInstance(sessionUsage, logicalSession, options);
+  const aggregateUsage = buildLogicalSessionAggregate(index, sessionUsage.sessionId, options);
+  const enrichedUsage = withLogicalSessionAggregate(sessionUsage, index, aggregateUsage);
+  const paths = writeLiveSession(enrichedUsage, options);
+  return { sessionUsage: enrichedUsage, paths, wasReset };
+}
+
+function readPreviousUsageForResume(sessionId, previous, options) {
+  let eventUsage = null;
+  try {
+    eventUsage = readRichestSessionUsageFromEvents(sessionId, options);
+  } catch {
+    eventUsage = null;
+  }
+  return usageWeight(eventUsage) > usageWeight(previous) ? eventUsage : previous;
+}
+
+function usageWeight(sessionUsage) {
+  return (sessionUsage?.modelUsage ?? []).reduce(
+    (total, item) => total
+      + numberOrZero(item.inputTokens)
+      + numberOrZero(item.cachedInputTokens)
+      + numberOrZero(item.cacheWriteTokens)
+      + numberOrZero(item.outputTokens)
+      + numberOrZero(item.reasoningTokens),
+    numberOrZero(sessionUsage?.premiumRequests)
+  );
+}
+
+function resolveLogicalSession(snapshot, previous) {
+  if (snapshot.transcriptPath) {
+    return {
+      id: `transcript:${hashValue(snapshot.transcriptPath)}`,
+      source: "transcript_path",
+      key: snapshot.transcriptPath
+    };
   }
 
-  const delta = subtractTotals(currentTotals, previousTotals);
-  const modelUsage = addDeltaToModel(previous.modelUsage ?? [], snapshot.currentModel, delta);
-  const merged = {
-    ...previous,
-    ...snapshot,
-    modelUsage,
-    lastContextTotals: currentTotals,
-    attribution: {
-      mode: "delta-by-active-model",
-      note: "Successive statusline cumulative-token deltas are attributed to the active model for that refresh."
+  if (previous?.logicalSession?.id && previous.logicalSession.source === "transcript_path") {
+    return {
+      id: previous.logicalSession.id,
+      source: previous.logicalSession.source,
+      key: previous.logicalSession.key
+    };
+  }
+
+  return {
+    id: `session:${snapshot.sessionId}`,
+    source: "session_id",
+    key: snapshot.sessionId
+  };
+}
+
+function hashValue(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
+}
+
+function withLogicalSession(sessionUsage, logicalSession, options = {}) {
+  const frozenContributions = options.frozenContributions ?? readFrozenContributions(sessionUsage);
+  return {
+    ...sessionUsage,
+    logicalSession: {
+      id: logicalSession.id,
+      source: logicalSession.source,
+      key: logicalSession.key,
+      currentInstanceId: sessionUsage.sessionId,
+      instanceCount: 1,
+      resumeCount: 0,
+      isResumed: false,
+      resetCount: frozenContributions.length,
+      frozenContributions
+    }
+  };
+}
+
+function withResumeLogicalSession(sessionUsage, logicalSession) {
+  return {
+    ...sessionUsage,
+    logicalSession: {
+      ...sessionUsage.logicalSession,
+      id: logicalSession.id,
+      source: logicalSession.source,
+      key: logicalSession.key,
+      currentInstanceId: sessionUsage.sessionId
+    },
+    aggregateUsage: sessionUsage.aggregateUsage
+      ? {
+          ...sessionUsage.aggregateUsage,
+          sessionId: logicalSession.id
+        }
+      : undefined
+  };
+}
+
+function withLogicalSessionAggregate(sessionUsage, index, aggregateUsage) {
+  const instanceCount = index.instances.length;
+  const premiumRequestsAggregation = aggregateUsage.logicalSession?.premiumRequestsAggregation;
+  const hasAggregateHistory = usageWeight(aggregateUsage) > usageWeight(sessionUsage);
+  const resumeCount = Math.max(
+    Number(sessionUsage.logicalSession?.resumeCount ?? 0),
+    Math.max(instanceCount - 1, 0),
+    hasAggregateHistory ? 1 : 0
+  );
+  return {
+    ...sessionUsage,
+    logicalSession: {
+      ...sessionUsage.logicalSession,
+      instances: index.instances,
+      instanceCount,
+      resumeCount,
+      isResumed: sessionUsage.logicalSession?.isResumed === true || instanceCount > 1 || hasAggregateHistory,
+      premiumRequestsAggregation
+    },
+    aggregateUsage
+  };
+}
+
+function buildLogicalSessionAggregate(index, currentInstanceId, options) {
+  const contributions = [];
+  let currentInstance;
+  for (const instance of index.instances) {
+    const usage = readLiveSession(instance.sessionId, options);
+    for (const frozen of readFrozenContributions(usage)) {
+      contributions.push(frozen);
+    }
+    contributions.push(usage);
+    if (instance.sessionId === currentInstanceId) {
+      currentInstance = usage;
+    }
+  }
+
+  const premiumRequestsAggregation = aggregatePremiumRequests(contributions);
+  const aggregateUsage = {
+    sessionId: index.id,
+    source: "copilot-cli-statusline-logical-session",
+    timestamp: currentInstance?.timestamp ?? new Date().toISOString(),
+    metricsEventType: "statusline.logical-aggregate",
+    metricsTimestamp: currentInstance?.metricsTimestamp,
+    metricsStale: false,
+    currentModel: currentInstance?.currentModel,
+    sessionName: currentInstance?.sessionName,
+    workspaceDirectory: currentInstance?.workspaceDirectory,
+    transcriptPath: index.source === "transcript_path" ? index.key : undefined,
+    premiumRequests: premiumRequestsAggregation.value,
+    totalApiDurationMs: sumOptional(contributions, "totalApiDurationMs"),
+    totalDurationMs: sumOptional(contributions, "totalDurationMs"),
+    totalLinesAdded: sumOptional(contributions, "totalLinesAdded"),
+    totalLinesRemoved: sumOptional(contributions, "totalLinesRemoved"),
+    modelUsage: sumModelUsage(contributions),
+    logicalSession: {
+      id: index.id,
+      source: index.source,
+      key: index.key,
+      currentInstanceId,
+      instances: index.instances,
+      instanceCount: index.instances.length,
+      resumeCount: Math.max(index.instances.length - 1, 0),
+      isResumed: index.instances.length > 1,
+      premiumRequestsAggregation
     }
   };
 
-  const paths = writeLiveSession(merged, options);
-  return { sessionUsage: merged, paths, wasReset: false };
+  if (aggregateUsage.premiumRequests === undefined) {
+    delete aggregateUsage.premiumRequests;
+  }
+  return aggregateUsage;
+}
+
+function aggregatePremiumRequests(contributions) {
+  let value;
+  let mode = "none";
+  for (const contribution of contributions) {
+    const premiumRequests = readOptionalNumber(contribution.premiumRequests);
+    if (premiumRequests === undefined) {
+      continue;
+    }
+
+    if (value === undefined) {
+      value = premiumRequests;
+      mode = "single";
+    } else if (premiumRequests >= value && value > 0) {
+      value = premiumRequests;
+      mode = mode === "sum-reset-instances" ? "mixed" : "latest-cumulative";
+    } else {
+      value = round(value + premiumRequests);
+      mode = mode === "latest-cumulative" ? "mixed" : "sum-reset-instances";
+    }
+  }
+
+  return { value, mode };
+}
+
+function sumModelUsage(contributions) {
+  const byModel = new Map();
+  for (const contribution of contributions) {
+    for (const item of contribution.modelUsage ?? []) {
+      const model = item.model;
+      if (!model) {
+        continue;
+      }
+      const target = byModel.get(model) ?? {
+        model,
+        requests: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0
+      };
+      target.requests += numberOrZero(item.requests);
+      target.inputTokens += numberOrZero(item.inputTokens);
+      target.cachedInputTokens += numberOrZero(item.cachedInputTokens);
+      target.cacheWriteTokens += numberOrZero(item.cacheWriteTokens);
+      target.outputTokens += numberOrZero(item.outputTokens);
+      target.reasoningTokens += numberOrZero(item.reasoningTokens);
+      byModel.set(model, target);
+    }
+  }
+  return Array.from(byModel.values());
+}
+
+function sumOptional(contributions, property) {
+  let total = 0;
+  let hasValue = false;
+  for (const contribution of contributions) {
+    if (contribution[property] !== undefined) {
+      total += numberOrZero(contribution[property]);
+      hasValue = true;
+    }
+  }
+  return hasValue ? total : undefined;
+}
+
+function readFrozenContributions(sessionUsage) {
+  return Array.isArray(sessionUsage?.logicalSession?.frozenContributions)
+    ? sessionUsage.logicalSession.frozenContributions.map((item) => ({ ...item }))
+    : [];
+}
+
+function toFrozenContribution(sessionUsage) {
+  return {
+    sessionId: `${sessionUsage.sessionId}#reset-${readFrozenContributions(sessionUsage).length + 1}`,
+    source: sessionUsage.source,
+    timestamp: sessionUsage.timestamp,
+    premiumRequests: sessionUsage.premiumRequests,
+    totalApiDurationMs: sessionUsage.totalApiDurationMs,
+    totalDurationMs: sessionUsage.totalDurationMs,
+    totalLinesAdded: sessionUsage.totalLinesAdded,
+    totalLinesRemoved: sessionUsage.totalLinesRemoved,
+    modelUsage: (sessionUsage.modelUsage ?? []).map((item) => ({ ...item }))
+  };
 }
 
 function readModelId(payload, options) {
@@ -177,4 +450,8 @@ function readOptionalNumber(value) {
 function numberOrZero(value) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function round(value) {
+  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }

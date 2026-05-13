@@ -3,6 +3,14 @@ import os from "node:os";
 import path from "node:path";
 
 export function readSessionUsageFromEvents(sessionId, options = {}) {
+  return readSessionUsageFromEventsCore(sessionId, options, "latest");
+}
+
+export function readRichestSessionUsageFromEvents(sessionId, options = {}) {
+  return readSessionUsageFromEventsCore(sessionId, options, "richest");
+}
+
+function readSessionUsageFromEventsCore(sessionId, options, mode) {
   if (!sessionId) {
     throw new Error("Session id is required.");
   }
@@ -13,11 +21,15 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
   }
 
   const events = readSessionEvents(eventsPath);
-  if (!events.latestMetricsEvent?.data?.modelMetrics) {
+  const selectedMetricsEvent = mode === "richest" ? events.richestMetricsEvent : events.latestMetricsEvent;
+  if (!selectedMetricsEvent?.data?.modelMetrics) {
     throw new Error(`No model metrics found in Copilot session events: ${eventsPath}`);
   }
 
-  return eventMetricsToSessionUsage(sessionId, events, eventsPath, options);
+  return eventMetricsToSessionUsage(sessionId, {
+    ...events,
+    latestMetricsEvent: selectedMetricsEvent
+  }, eventsPath, options);
 }
 
 export function listCompletedSessionSummaries(options = {}) {
@@ -119,6 +131,7 @@ export function readSessionWorkspaceMetadata(sessionId, options = {}) {
 
 function readSessionEvents(eventsPath) {
   let latestMetricsEvent = null;
+  let richestMetricsEvent = null;
   let latestEvent = null;
   let latestNonHookEvent = null;
   const metadata = {};
@@ -135,11 +148,15 @@ function readSessionEvents(eventsPath) {
     }
     if (event?.data?.modelMetrics || event?.data?.totalPremiumRequests !== undefined) {
       latestMetricsEvent = event;
+      if (!richestMetricsEvent || eventMetricsWeight(event) > eventMetricsWeight(richestMetricsEvent)) {
+        richestMetricsEvent = event;
+      }
     }
   }
 
   return {
     latestMetricsEvent,
+    richestMetricsEvent,
     latestEvent: latestNonHookEvent ?? latestEvent,
     metadata
   };
@@ -259,5 +276,18 @@ function readOptionalNumber(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function eventMetricsWeight(event) {
+  let total = numberOrZero(event?.data?.totalPremiumRequests);
+  for (const metrics of Object.values(event?.data?.modelMetrics ?? {})) {
+    const usage = metrics.usage ?? {};
+    total += numberOrZero(usage.inputTokens)
+      + numberOrZero(usage.cacheReadTokens)
+      + numberOrZero(usage.cacheWriteTokens)
+      + numberOrZero(usage.outputTokens)
+      + numberOrZero(usage.reasoningTokens);
+  }
+  return total;
 }
 
