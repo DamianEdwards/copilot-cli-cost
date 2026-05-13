@@ -21,14 +21,24 @@
     </header>
 
     <section class="panel controls">
+      <label for="session-query">Session</label>
+      <div class="session-picker">
+        <div class="session-combobox">
+          <input id="session-query" autocomplete="off" placeholder="Search sessions">
+          <button id="session-toggle" class="control-button icon-button" type="button" aria-expanded="false" aria-label="Show sessions">v</button>
+          <div id="session-list" class="session-list" role="listbox" hidden></div>
+        </div>
+        <button id="session-current" class="control-button" type="button">Current</button>
+      </div>
+      <p id="session-picker-note" class="hint">Search by session name or ID.</p>
       <label for="plan">What-if subscription</label>
-        <select id="plan">
-          <option value="pro">Copilot Pro</option>
-          <option value="pro-plus">Copilot Pro+</option>
-          <option value="max">Copilot Max</option>
-          <option value="business">Copilot Business</option>
-          <option value="enterprise">Copilot Enterprise</option>
-          <option value="free">Copilot Free</option>
+      <select id="plan">
+        <option value="pro">Copilot Pro</option>
+        <option value="pro-plus">Copilot Pro+</option>
+        <option value="max">Copilot Max</option>
+        <option value="business">Copilot Business</option>
+        <option value="enterprise">Copilot Enterprise</option>
+        <option value="free">Copilot Free</option>
         <option value="student">Copilot Student</option>
       </select>
       <p id="current-plan" class="hint">Current subscription: detecting...</p>

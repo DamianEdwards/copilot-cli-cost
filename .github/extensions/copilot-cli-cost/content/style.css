@@ -47,6 +47,11 @@ h2 {
   margin-bottom: 12px;
 }
 
+button,
+input {
+  font: inherit;
+}
+
 button {
   background: #238636;
   border: 0;
@@ -61,12 +66,34 @@ button:hover {
   background: #2ea043;
 }
 
+.control-button {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+}
+
+.control-button:hover {
+  background: #30363d;
+}
+
+.icon-button {
+  border-bottom-left-radius: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  padding-inline: 10px;
+}
+
+input,
 select {
   background: #0d1117;
   border: 1px solid #30363d;
   border-radius: 8px;
   color: #e6edf3;
   padding: 8px 10px;
+}
+
+input {
+  width: 100%;
 }
 
 .eyebrow,
@@ -116,7 +143,7 @@ small {
   align-items: center;
   display: grid;
   gap: 10px;
-  grid-template-columns: max-content 220px 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
 }
 
 .controls label {
@@ -124,13 +151,108 @@ small {
   font-weight: 600;
 }
 
+.controls select {
+  max-width: 360px;
+  width: 100%;
+}
+
 .hint {
   color: #8b949e;
   font-size: 13px;
 }
 
+.controls > .hint:not(.full-width) {
+  grid-column: 2;
+}
+
 .full-width {
   grid-column: 1 / -1;
+}
+
+.session-picker {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.session-picker > .control-button {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.session-combobox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-width: 0;
+  position: relative;
+}
+
+.session-combobox input {
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.session-list {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 45%);
+  left: 0;
+  max-height: 300px;
+  overflow: auto;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+}
+
+.session-list[hidden] {
+  display: none;
+}
+
+.session-list-heading {
+  color: #8b949e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 8px 8px 4px;
+  text-transform: uppercase;
+}
+
+.session-option {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #c9d1d9;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.session-option:hover,
+.session-option.selected {
+  background: #1f2937;
+}
+
+.session-option-title {
+  color: #e6edf3;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-option-meta {
+  color: #8b949e;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cards {

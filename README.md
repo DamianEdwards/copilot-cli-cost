@@ -170,7 +170,8 @@ The panel shows:
 
 - Usage-based estimate
 - Premium-request estimate
-- Active session ID and data source
+- Searchable session picker for current, cached live, and completed sessions
+- Selected session ID and data source
 - Current or assumed subscription
 - What-if subscription selector
 - Display currency selector

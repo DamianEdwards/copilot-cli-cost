@@ -7,7 +7,7 @@ Show Copilot CLI session cost on demand and in live UI surfaces:
 - `/cost`
 - `/cost session <session-id>`
 - status line
-- side panel with plan and currency comparisons
+- side panel with session, plan, and currency comparisons
 
 ## Design
 

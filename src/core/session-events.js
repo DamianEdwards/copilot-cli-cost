@@ -12,9 +12,116 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
     throw new Error(`Copilot session events file not found: ${eventsPath}`);
   }
 
+  const events = readSessionEvents(eventsPath);
+  if (!events.latestMetricsEvent?.data?.modelMetrics) {
+    throw new Error(`No model metrics found in Copilot session events: ${eventsPath}`);
+  }
+
+  return eventMetricsToSessionUsage(sessionId, events, eventsPath, options);
+}
+
+export function listCompletedSessionSummaries(options = {}) {
+  const sessionStateDirectory = options.sessionStateDirectory ?? getSessionStateDirectory(options);
+  if (!fs.existsSync(sessionStateDirectory)) {
+    return [];
+  }
+
+  const candidates = fs.readdirSync(sessionStateDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const sessionId = entry.name;
+      const eventsPath = path.join(sessionStateDirectory, sessionId, "events.jsonl");
+      if (!fs.existsSync(eventsPath)) {
+        return null;
+      }
+      return {
+        eventsPath,
+        sessionId,
+        updatedAtMs: fs.statSync(eventsPath).mtimeMs
+      };
+    })
+    .filter((candidate) => candidate !== null)
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  const limitedCandidates = options.limit ? candidates.slice(0, options.limit) : candidates;
+
+  return limitedCandidates
+    .map((candidate) => readSessionSummaryFromEvents(candidate.sessionId, { ...options, eventsPath: candidate.eventsPath }))
+    .filter((summary) => summary !== null)
+    .sort(compareUpdatedAtDescending);
+}
+
+export function readSessionSummaryFromEvents(sessionId, options = {}) {
+  if (!sessionId) {
+    throw new Error("Session id is required.");
+  }
+
+  const eventsPath = options.eventsPath ?? getSessionEventsPath(sessionId, options);
+  if (!fs.existsSync(eventsPath)) {
+    throw new Error(`Copilot session events file not found: ${eventsPath}`);
+  }
+
+  const events = readSessionEvents(eventsPath);
+  if (!events.latestMetricsEvent?.data?.modelMetrics) {
+    return null;
+  }
+
+  const stat = fs.statSync(eventsPath);
+  const workspaceMetadata = readSessionWorkspaceMetadata(sessionId, options);
+  return {
+    source: "completed",
+    sessionId,
+    sessionName: workspaceMetadata.sessionName ?? events.metadata.sessionName,
+    workspaceDirectory: workspaceMetadata.workspaceDirectory ?? events.metadata.workspaceDirectory,
+    repository: workspaceMetadata.repository,
+    branch: workspaceMetadata.branch,
+    currentModel: events.latestMetricsEvent.data.currentModel,
+    metricsTimestamp: events.latestMetricsEvent.timestamp,
+    latestEventType: events.latestEvent?.type,
+    latestEventTimestamp: events.latestEvent?.timestamp,
+    metricsStale: events.latestEvent?.timestamp !== events.latestMetricsEvent.timestamp,
+    updatedAt: events.latestEvent?.timestamp ?? events.latestMetricsEvent.timestamp ?? stat.mtime.toISOString(),
+    sourcePath: String(eventsPath)
+  };
+}
+
+export function getSessionStateDirectory(options = {}) {
+  const copilotHome = options.copilotHome ?? process.env.COPILOT_HOME ?? path.join(os.homedir(), ".copilot");
+  return path.join(copilotHome, "session-state");
+}
+
+export function getSessionEventsPath(sessionId, options = {}) {
+  return path.join(getSessionStateDirectory(options), sessionId, "events.jsonl");
+}
+
+export function readSessionWorkspaceMetadata(sessionId, options = {}) {
+  if (!sessionId) {
+    throw new Error("Session id is required.");
+  }
+
+  const workspacePath = options.workspacePath ?? path.join(getSessionStateDirectory(options), sessionId, "workspace.yaml");
+  if (!fs.existsSync(workspacePath)) {
+    return {};
+  }
+
+  const data = parseWorkspaceYaml(fs.readFileSync(workspacePath, "utf8"));
+  return {
+    sessionId: data.id ?? sessionId,
+    sessionName: readString(data.name),
+    workspaceDirectory: readString(data.cwd),
+    gitRoot: readString(data.git_root),
+    repository: readString(data.repository),
+    branch: readString(data.branch),
+    createdAt: readString(data.created_at),
+    updatedAt: readString(data.updated_at),
+    sourcePath: workspacePath
+  };
+}
+
+function readSessionEvents(eventsPath) {
   let latestMetricsEvent = null;
   let latestEvent = null;
   let latestNonHookEvent = null;
+  const metadata = {};
   for (const line of fs.readFileSync(eventsPath, "utf8").split(/\r?\n/)) {
     if (!line.trim()) {
       continue;
@@ -22,6 +129,7 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
 
     const event = JSON.parse(line);
     latestEvent = event;
+    updateEventMetadata(metadata, event);
     if (!String(event.type ?? "").startsWith("hook.")) {
       latestNonHookEvent = event;
     }
@@ -30,19 +138,17 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
     }
   }
 
-  if (!latestMetricsEvent?.data?.modelMetrics) {
-    throw new Error(`No model metrics found in Copilot session events: ${eventsPath}`);
-  }
-
-  return eventMetricsToSessionUsage(sessionId, latestMetricsEvent, latestNonHookEvent ?? latestEvent, eventsPath);
+  return {
+    latestMetricsEvent,
+    latestEvent: latestNonHookEvent ?? latestEvent,
+    metadata
+  };
 }
 
-export function getSessionEventsPath(sessionId, options = {}) {
-  const copilotHome = options.copilotHome ?? process.env.COPILOT_HOME ?? path.join(os.homedir(), ".copilot");
-  return path.join(copilotHome, "session-state", sessionId, "events.jsonl");
-}
-
-function eventMetricsToSessionUsage(sessionId, event, latestEvent, sourcePath) {
+function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {}) {
+  const event = events.latestMetricsEvent;
+  const latestEvent = events.latestEvent;
+  const workspaceMetadata = readSessionWorkspaceMetadata(sessionId, options);
   const modelUsage = Object.entries(event.data.modelMetrics).map(([model, metrics]) => {
     const usage = metrics.usage ?? {};
     const requests = metrics.requests ?? {};
@@ -63,6 +169,10 @@ function eventMetricsToSessionUsage(sessionId, event, latestEvent, sourcePath) {
     sessionId,
     source: "copilot-cli-events",
     sourcePath,
+    sessionName: workspaceMetadata.sessionName ?? events.metadata.sessionName,
+    workspaceDirectory: workspaceMetadata.workspaceDirectory ?? events.metadata.workspaceDirectory,
+    repository: workspaceMetadata.repository,
+    branch: workspaceMetadata.branch,
     timestamp: event.timestamp,
     metricsEventType: event.type,
     metricsTimestamp: event.timestamp,
@@ -73,6 +183,69 @@ function eventMetricsToSessionUsage(sessionId, event, latestEvent, sourcePath) {
     premiumRequests: readOptionalNumber(event.data.totalPremiumRequests),
     modelUsage
   };
+}
+
+function updateEventMetadata(metadata, event) {
+  const data = event.data ?? {};
+  const sessionName = readString(
+    data.sessionName
+      ?? data.session_name
+      ?? data.name
+      ?? data.title
+      ?? event.sessionName
+      ?? event.session_name
+  );
+  if (sessionName) {
+    metadata.sessionName = sessionName;
+  }
+
+  const workspaceDirectory = readString(
+    data.workspaceDirectory
+      ?? data.workspace_directory
+      ?? data.workspace?.current_dir
+      ?? data.cwd
+      ?? event.workspaceDirectory
+      ?? event.workspace_directory
+      ?? event.cwd
+  );
+  if (workspaceDirectory) {
+    metadata.workspaceDirectory = workspaceDirectory;
+  }
+}
+
+function parseWorkspaceYaml(raw) {
+  const result = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    result[match[1]] = unquoteYamlScalar(match[2]);
+  }
+  return result;
+}
+
+function unquoteYamlScalar(value) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function compareUpdatedAtDescending(left, right) {
+  return Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? "");
+}
+
+function readString(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return String(value);
 }
 
 function numberOrZero(value) {
