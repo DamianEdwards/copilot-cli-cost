@@ -5,7 +5,6 @@ import { readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, normalize, resolve, sep } from "node:path";
-import { joinSession } from "@github/copilot-sdk/extension";
 
 const MIME = {
   ".css": "text/css",
@@ -57,14 +56,9 @@ export async function bootstrap(extensionDirectory) {
     return;
   }
 
-  const session = await joinSession();
-  await session.log("Installing Copilot Cost panel dependencies...", { ephemeral: true });
-  try {
-    execSync("npm install --include=optional --no-audit --no-fund", { cwd: extensionDirectory, stdio: "ignore" });
-    await session.log("Copilot Cost panel dependencies installed.", { ephemeral: true });
-  } finally {
-    await session.disconnect();
-  }
+  console.error("[extension-bootstrap] Installing Copilot Cost panel dependencies...");
+  execSync("npm install --include=optional --no-audit --no-fund", { cwd: extensionDirectory, stdio: "ignore" });
+  console.error("[extension-bootstrap] Copilot Cost panel dependencies installed.");
 }
 
 function hasPanelDependencies(extensionDirectory) {

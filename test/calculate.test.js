@@ -44,7 +44,12 @@ test("calculates usage-based billing from token buckets", () => {
 
   assert.equal(result.totalUsd, 49.55);
   assert.equal(result.aiCredits, 4955);
-  assert.equal(result.includedAiCredits, 1000);
+  assert.equal(result.includedAiCredits, 1500);
+  assert.deepEqual(result.includedAiCreditAllotment, {
+    baseAiCredits: 1000,
+    flexAiCredits: 500,
+    totalAiCredits: 1500
+  });
   assert.equal(result.modelBreakdown.length, 2);
   assert.deepEqual(result.modelBreakdown[0].rates, {
     inputPerMillionUsd: 5,
@@ -57,6 +62,34 @@ test("calculates usage-based billing from token buckets", () => {
   assert.equal(result.modelBreakdown[0].inputUsd, 0);
   assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.5);
   assert.equal(result.modelBreakdown[0].outputUsd, 30);
+});
+
+test("calculates usage-based allowances with individual flex allotments", () => {
+  const proPlus = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    plan: "pro+",
+    currency: "USD"
+  });
+  const max = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    plan: "Copilot Max",
+    currency: "USD"
+  });
+
+  assert.equal(proPlus.plan, "pro-plus");
+  assert.equal(proPlus.includedAiCredits, 7000);
+  assert.deepEqual(proPlus.includedAiCreditAllotment, {
+    baseAiCredits: 3900,
+    flexAiCredits: 3100,
+    totalAiCredits: 7000
+  });
+  assert.equal(max.plan, "max");
+  assert.equal(max.includedAiCredits, 20000);
+  assert.deepEqual(max.includedAiCreditAllotment, {
+    baseAiCredits: 10000,
+    flexAiCredits: 10000,
+    totalAiCredits: 20000
+  });
 });
 
 test("calculates usage-based input billing from uncached input tokens", () => {

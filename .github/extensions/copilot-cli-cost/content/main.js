@@ -19,17 +19,19 @@ const elements = {
 let selectedCurrency;
 let selectedPlan;
 const planAllowances = {
-  free: { aiCredits: 0, premiumRequests: 50 },
-  pro: { aiCredits: 1000, premiumRequests: 300 },
-  "pro-plus": { aiCredits: 3900, premiumRequests: 1500 },
-  business: { aiCredits: 1900, premiumRequests: 300 },
-  enterprise: { aiCredits: 3900, premiumRequests: 1000 },
-  student: { aiCredits: 0, premiumRequests: 300 }
+  free: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0, premiumRequests: 50 },
+  pro: { baseAiCredits: 1000, flexAiCredits: 500, totalAiCredits: 1500, premiumRequests: 300 },
+  "pro-plus": { baseAiCredits: 3900, flexAiCredits: 3100, totalAiCredits: 7000, premiumRequests: 1500 },
+  max: { baseAiCredits: 10000, flexAiCredits: 10000, totalAiCredits: 20000 },
+  business: { baseAiCredits: 1900, flexAiCredits: 0, totalAiCredits: 1900, premiumRequests: 300 },
+  enterprise: { baseAiCredits: 3900, flexAiCredits: 0, totalAiCredits: 3900, premiumRequests: 1000 },
+  student: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0, premiumRequests: 300 }
 };
 const planLabels = {
   free: "Copilot Free",
   pro: "Copilot Pro",
   "pro-plus": "Copilot Pro+",
+  max: "Copilot Max",
   business: "Copilot Business",
   enterprise: "Copilot Enterprise",
   student: "Copilot Student"
@@ -85,9 +87,9 @@ function render(data) {
     elements.usageSubtitle.textContent = usageBased.error;
   } else {
     const usagePlan = selectedPlan ?? usageBased.plan;
-    const includedAiCredits = planAllowances[usagePlan]?.aiCredits ?? usageBased.includedAiCredits;
+    const includedAiCreditAllotment = readAiCreditAllotment(usageBased, usagePlan);
     elements.usageTotal.textContent = formatCurrency(usageBased.displayTotal, usageBased.currency.code);
-    elements.usageSubtitle.textContent = `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatNumber(includedAiCredits, 1)} included · ${usagePlan}`;
+    elements.usageSubtitle.textContent = `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatAiCreditAllotment(includedAiCreditAllotment)} · ${usagePlan}`;
   }
 
   if (premiumRequests?.error) {
@@ -169,6 +171,31 @@ function renderCurrentPlan(currentSubscription, activePlan) {
   } else {
     elements.whatIfNote.textContent = "Recalculates allowances for the selected plan. Token usage and model are kept as observed.";
   }
+}
+
+function readAiCreditAllotment(usageBased, usagePlan) {
+  const planAllotment = planAllowances[usagePlan];
+  const resultAllotment = usageBased.includedAiCreditAllotment;
+  return resultAllotment ?? (planAllotment
+    ? {
+        baseAiCredits: planAllotment.baseAiCredits,
+        flexAiCredits: planAllotment.flexAiCredits,
+        totalAiCredits: planAllotment.totalAiCredits
+      }
+    : {
+        baseAiCredits: 0,
+        flexAiCredits: 0,
+        totalAiCredits: usageBased.includedAiCredits ?? 0
+      });
+}
+
+function formatAiCreditAllotment(allotment) {
+  const total = formatNumber(allotment.totalAiCredits, 1);
+  const flex = Number(allotment.flexAiCredits ?? 0);
+  if (flex <= 0) {
+    return `${total} included`;
+  }
+  return `${total} included (${formatNumber(allotment.baseAiCredits, 1)} base + ${formatNumber(flex, 1)} flex)`;
 }
 
 function capitalize(value) {

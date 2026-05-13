@@ -103,6 +103,7 @@ The estimate is intended to be explainable and reconcilable, not an invoice:
 
 - Token buckets and premium request totals come from Copilot CLI's own live `usage.getMetrics()` RPC, completed-session `modelMetrics`, or statusline counters.
 - Per-token rates and AI Credit conversion match GitHub's published model pricing table: prices are per 1M tokens and `1 AI credit = $0.01 USD`.
+- Individual plan allowances preserve the published base/flex split and derive included AI Credits from `baseAiCredits + flexAiCredits`.
 - Anthropic cache write charges are modeled separately because GitHub documents a cache-write rate for those models.
 - Premium request calculations prefer Copilot's already-multiplied PRU total when present, avoiding double-applying local multiplier assumptions.
 - Business and Enterprise AI Credit allowances are pooled at the billing entity level, so the session estimate does not necessarily represent incremental billable spend.

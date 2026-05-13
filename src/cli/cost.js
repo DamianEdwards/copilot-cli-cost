@@ -234,7 +234,7 @@ function printHuman(result) {
   if (result.billingModel === "usage-based") {
     console.log(`Cost: ${formatMoney(result.totalUsd, "USD")} (${formatMoney(result.displayTotal, result.currency.code)})`);
     console.log(`AI credits: ${result.aiCredits}`);
-    console.log(`Included monthly credits for plan: ${result.includedAiCredits}`);
+    console.log(`Included monthly credits for plan: ${formatAiCreditAllotment(result)}`);
     console.log(`Currency rate: USD -> ${result.currency.code} ${result.currency.exchangeRate} (${result.currency.source})`);
     console.log("");
     console.log("Model breakdown:");
@@ -280,7 +280,7 @@ Options:
   --statusline-payload <file>      Read a raw Copilot CLI statusline JSON payload
   --copilot-home <path>            Override Copilot home when using --session
   --billing-model <model>          usage-based | premium-requests
-  --plan <plan>                    free | pro | pro-plus | business | enterprise | student
+  --plan <plan>                    free | pro | pro-plus | max | business | enterprise | student
   --premium-requests <count>       Calculate from an already-multiplied PRU count
   --remaining-premium-requests <n> Monthly PRUs remaining before this session
   --session-id <id>                Session id to include in output
@@ -293,6 +293,19 @@ Options:
   --json                           Print machine-readable JSON
   --help                           Show help
 `);
+}
+
+function formatAiCreditAllotment(result) {
+  const allotment = result.includedAiCreditAllotment ?? {
+    baseAiCredits: result.includedAiCredits ?? 0,
+    flexAiCredits: 0,
+    totalAiCredits: result.includedAiCredits ?? 0
+  };
+  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
+  if (flexAiCredits <= 0) {
+    return `${allotment.totalAiCredits}`;
+  }
+  return `${allotment.totalAiCredits} (${allotment.baseAiCredits} base + ${flexAiCredits} flex)`;
 }
 
 function readValue(argv, index, flag) {
