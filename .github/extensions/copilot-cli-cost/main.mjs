@@ -47,7 +47,7 @@ session = await joinSession({
         properties: {
           billingModel: { type: "string", enum: ["usage-based", "premium-requests"] },
           currency: { type: "string", description: "Display currency code, default USD." },
-          plan: { type: "string", description: "Plan id, e.g. pro, pro-plus, business, enterprise." },
+          plan: { type: "string", description: "Plan id, e.g. pro, pro-plus, max, business, enterprise." },
           sessionId: { type: "string", description: "Session id to read." },
           source: { type: "string", enum: ["live", "live-session", "completed"], description: "Usage source." }
         }
@@ -120,7 +120,7 @@ function formatCostHelp() {
     "/cost panel on|off|refresh",
     "/cost session <session-id>",
     "/cost live-session <session-id>",
-    "/cost --plan pro|pro-plus|business|enterprise",
+    "/cost --plan pro|pro-plus|max|business|enterprise",
     "/cost --billing-model usage-based|premium-requests",
     "/cost --currency USD"
   ].join("\n");
@@ -262,8 +262,11 @@ function mapCopilotPlan(plan) {
   if (normalized.includes("business")) {
     return "business";
   }
-  if (normalized.includes("pro-plus") || normalized.includes("proplus")) {
+  if (normalized.includes("pro+") || normalized.includes("pro-plus") || normalized.includes("proplus")) {
     return "pro-plus";
+  }
+  if (normalized.includes("max")) {
+    return "max";
   }
   if (normalized.includes("student")) {
     return "student";
@@ -363,7 +366,7 @@ function formatCostCommandOutput(data) {
     lines.push(`Usage-based: unavailable (${data.usageBased.error})`);
   } else if (data.usageBased) {
     lines.push(`Usage-based: ~${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
-    lines.push(`Plan allowance: ${data.usageBased.includedAiCredits} AI credits for ${data.usageBased.plan}`);
+    lines.push(`Plan allowance: ${formatAiCreditAllotment(data.usageBased)} for ${data.usageBased.plan}`);
   }
 
   if (data.premiumRequests?.error) {
@@ -377,6 +380,19 @@ function formatCostCommandOutput(data) {
   lines.push("Panel: /cost panel on");
   lines.push("Completed session: /cost session <session-id>");
   return lines.join("\n");
+}
+
+function formatAiCreditAllotment(usageBased) {
+  const allotment = usageBased.includedAiCreditAllotment ?? {
+    baseAiCredits: usageBased.includedAiCredits ?? 0,
+    flexAiCredits: 0,
+    totalAiCredits: usageBased.includedAiCredits ?? 0
+  };
+  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
+  if (flexAiCredits <= 0) {
+    return `${allotment.totalAiCredits} AI credits`;
+  }
+  return `${allotment.totalAiCredits} AI credits (${allotment.baseAiCredits} base + ${flexAiCredits} flex)`;
 }
 
 async function resolveExchangeRate(currency) {

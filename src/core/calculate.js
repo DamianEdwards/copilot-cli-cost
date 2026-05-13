@@ -3,6 +3,7 @@ import {
   PREMIUM_REQUEST_USD,
   TOKENS_PER_MILLION,
   modelAliases,
+  planAiCreditAllotments,
   planAllowances,
   planIds,
   premiumRequestMultipliers,
@@ -75,7 +76,8 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
   const totalUsd = roundCost(sum(modelBreakdown, (item) => item.totalUsd));
   const aiCredits = usdToAiCredits(totalUsd);
   const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
-  const includedAiCredits = getIncludedAiCredits(plan, scenario);
+  const includedAiCreditAllotment = getIncludedAiCreditAllotment(plan, scenario);
+  const includedAiCredits = includedAiCreditAllotment.totalAiCredits;
 
   return {
     billingModel: "usage-based",
@@ -91,6 +93,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
     totalUsd,
     displayTotal: convertUsd(totalUsd, currency),
     aiCredits,
+    includedAiCreditAllotment,
     includedAiCredits,
     includedCreditsApplied: Math.min(aiCredits, includedAiCredits),
     overageCreditsIfAllowanceExhausted: aiCredits,
@@ -175,11 +178,23 @@ export function normalizeModelId(model) {
 }
 
 export function normalizePlanId(plan) {
-  const normalized = String(plan ?? planIds.pro).trim().toLowerCase();
-  if (normalized === "pro+" || normalized === "pro_plus" || normalized === "proplus") {
+  const normalized = String(plan ?? planIds.pro).trim().toLowerCase().replace(/[_\s]+/g, "-");
+  if (
+    normalized === "pro+"
+    || normalized === "pro-plus"
+    || normalized === "proplus"
+    || normalized === "copilot-pro+"
+    || normalized === "copilot-pro-plus"
+    || normalized === "copilot-proplus"
+    || normalized === "github-copilot-pro+"
+    || normalized === "github-copilot-pro-plus"
+  ) {
     return planIds.proPlus;
   }
-  if (normalized === "individual" || normalized === "copilot-pro") {
+  if (normalized === "max" || normalized === "copilot-max" || normalized === "github-copilot-max") {
+    return planIds.max;
+  }
+  if (normalized === "individual" || normalized === "copilot-pro" || normalized === "github-copilot-pro") {
     return planIds.pro;
   }
   if (normalized === "enterprise-cloud") {
@@ -228,11 +243,20 @@ function readOptionalNumber(value) {
   return parsed;
 }
 
-function getIncludedAiCredits(plan, scenario) {
+function getIncludedAiCreditAllotment(plan, scenario) {
   if (scenario.promotionalAllowance && planAllowances.promotionalAiCredits[plan] !== undefined) {
-    return planAllowances.promotionalAiCredits[plan];
+    const promotionalAiCredits = planAllowances.promotionalAiCredits[plan];
+    return {
+      baseAiCredits: promotionalAiCredits,
+      flexAiCredits: 0,
+      totalAiCredits: promotionalAiCredits
+    };
   }
-  return planAllowances.aiCredits[plan] ?? 0;
+  return planAiCreditAllotments[plan] ?? {
+    baseAiCredits: 0,
+    flexAiCredits: 0,
+    totalAiCredits: 0
+  };
 }
 
 function costForTokens(tokens, perMillionUsd) {

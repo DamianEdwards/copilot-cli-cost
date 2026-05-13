@@ -6,9 +6,20 @@ export const planIds = Object.freeze({
   free: "free",
   pro: "pro",
   proPlus: "pro-plus",
+  max: "max",
   business: "business",
   enterprise: "enterprise",
   student: "student"
+});
+
+export const planAiCreditAllotments = Object.freeze({
+  [planIds.free]: aiCreditAllotment({ base: 0 }),
+  [planIds.pro]: aiCreditAllotment({ base: 1000, flex: 500 }),
+  [planIds.proPlus]: aiCreditAllotment({ base: 3900, flex: 3100 }),
+  [planIds.max]: aiCreditAllotment({ base: 10000, flex: 10000 }),
+  [planIds.business]: aiCreditAllotment({ base: 1900 }),
+  [planIds.enterprise]: aiCreditAllotment({ base: 3900 }),
+  [planIds.student]: aiCreditAllotment({ base: 0 })
 });
 
 export const planAllowances = Object.freeze({
@@ -20,14 +31,9 @@ export const planAllowances = Object.freeze({
     [planIds.enterprise]: 1000,
     [planIds.student]: 300
   },
-  aiCredits: {
-    [planIds.free]: 0,
-    [planIds.pro]: 1000,
-    [planIds.proPlus]: 3900,
-    [planIds.business]: 1900,
-    [planIds.enterprise]: 3900,
-    [planIds.student]: 0
-  },
+  aiCredits: Object.freeze(Object.fromEntries(
+    Object.entries(planAiCreditAllotments).map(([plan, allotment]) => [plan, allotment.totalAiCredits])
+  )),
   promotionalAiCredits: {
     [planIds.business]: 3000,
     [planIds.enterprise]: 7000
@@ -144,6 +150,14 @@ function rate({ input, cachedInput, cacheWrite = 0, output }) {
     cachedInputPerMillionUsd: cachedInput,
     cacheWritePerMillionUsd: cacheWrite,
     outputPerMillionUsd: output
+  });
+}
+
+function aiCreditAllotment({ base, flex = 0 }) {
+  return Object.freeze({
+    baseAiCredits: base,
+    flexAiCredits: flex,
+    totalAiCredits: base + flex
   });
 }
 

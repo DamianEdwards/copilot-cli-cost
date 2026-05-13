@@ -16,7 +16,7 @@ The calculator stores canonical cost in USD and converts to a selected display c
 - `/cost` command for active-session estimates
 - `/cost session <session-id>` for completed local sessions
 - Native cost panel with token bucket breakdowns
-- What-if subscription comparison for Copilot Free, Pro, Pro+, Business, Enterprise, and Student
+- What-if subscription comparison for Copilot Free, Pro, Pro+, Max, Business, Enterprise, and Student
 - Display currency selector backed by cached Frankfurter USD exchange rates
 - Statusline cost segment with optional passthrough to another statusline
 - Standalone calculator CLI for sample data, JSON files, completed session events, and live snapshots
@@ -153,7 +153,7 @@ The statusline bridge prints a compact segment:
 /cost panel refresh
 /cost session <session-id>
 /cost live-session <session-id>
-/cost --plan pro|pro-plus|business|enterprise
+/cost --plan pro|pro-plus|max|business|enterprise
 /cost --billing-model usage-based|premium-requests
 /cost --currency USD|EUR|GBP|CAD|AUD|JPY|CHF
 ```
@@ -338,7 +338,7 @@ npm run cost -- --sample
 npm run cost -- --sample --billing-model premium-requests --plan pro-plus
 npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
 npm run cost -- --session <session-id> --plan pro
-npm run cost -- --live --plan enterprise
+npm run cost -- --live --plan max
 npm run cost -- --sample --currency EUR
 npm run cost -- --sample --currency EUR --exchange-rate 0.9
 ```
@@ -376,9 +376,12 @@ cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
 outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
 reasoningUsd        = 0 unless COPILOT_COST_BILL_REASONING_TOKENS=true
 aiCredits           = totalUsd / 0.01
+includedAiCredits   = baseAiCredits + current flexAiCredits
 ```
 
 Premium-request billing uses Copilot-reported premium request units when present. If only model request counts are available, it applies the configured model multiplier table.
+
+For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output. Copilot Max is usage-based only in this calculator; premium-request support remains for existing request-based plans.
 
 Non-USD currency values are display estimates. USD remains canonical because GitHub model rates and AI Credits are documented in USD. Non-USD `/cost` and panel requests fetch USD exchange rates from [Frankfurter](https://www.frankfurter.dev/) and cache them for reuse; explicit environment or CLI exchange-rate overrides take precedence.
 
