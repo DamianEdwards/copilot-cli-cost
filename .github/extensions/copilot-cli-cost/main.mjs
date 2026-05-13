@@ -5,8 +5,8 @@ import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
 import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
 import { readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
-import { readSessionUsageFromEvents } from "../../../src/core/session-events.js";
-import { usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
+import { readRichestSessionUsageFromEvents, readSessionUsageFromEvents } from "../../../src/core/session-events.js";
+import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -199,8 +199,19 @@ async function getCostData({
     ...scenario,
     billingModel: "premium-requests"
   });
+  const aggregateUsage = sessionUsage.aggregateUsage;
+  const aggregateUsageBased = aggregateUsage ? tryCalculate(aggregateUsage, {
+    ...scenario,
+    billingModel: "usage-based"
+  }) : undefined;
+  const aggregatePremiumRequests = aggregateUsage ? tryCalculate(aggregateUsage, {
+    ...scenario,
+    billingModel: "premium-requests"
+  }) : undefined;
 
   return {
+    aggregatePremiumRequests,
+    aggregateUsageBased,
     generatedAt: new Date().toISOString(),
     currentSubscription,
     exchangeRate: exchangeRate.rateInfo,
@@ -325,8 +336,9 @@ async function readLiveRpcUsageOrFallback() {
   try {
     const metrics = await session.rpc.usage.getMetrics();
     const sessionUsage = usageMetricsToSessionUsage(session.sessionId, metrics);
-    writeLiveSession(sessionUsage);
-    return sessionUsage;
+    const mergedUsage = mergeResumedSessionUsage(sessionUsage, readPreviousUsageForResume(session.sessionId));
+    writeLiveSession(mergedUsage);
+    return mergedUsage;
   } catch (error) {
     try {
       return withFallbackReason(readLiveSession(session.sessionId), error);
@@ -338,6 +350,37 @@ async function readLiveRpcUsageOrFallback() {
       }
     }
   }
+}
+
+function readPreviousUsageForResume(sessionId) {
+  let liveUsage = null;
+  let eventUsage = null;
+  try {
+    liveUsage = readLiveSession(sessionId);
+  } catch {
+    liveUsage = null;
+  }
+  try {
+    eventUsage = readRichestSessionUsageFromEvents(sessionId);
+  } catch {
+    eventUsage = null;
+  }
+  if (usageWeight(eventUsage) > usageWeight(liveUsage)) {
+    return eventUsage;
+  }
+  return liveUsage;
+}
+
+function usageWeight(sessionUsage) {
+  return (sessionUsage?.modelUsage ?? []).reduce(
+    (total, item) => total
+      + Number(item.inputTokens ?? 0)
+      + Number(item.cachedInputTokens ?? 0)
+      + Number(item.cacheWriteTokens ?? 0)
+      + Number(item.outputTokens ?? 0)
+      + Number(item.reasoningTokens ?? 0),
+    Number(sessionUsage?.premiumRequests ?? 0)
+  );
 }
 
 function withFallbackReason(sessionUsage, error) {
@@ -361,11 +404,19 @@ function formatCostCommandOutput(data) {
   const lines = [];
   const sessionId = data.sessionUsage?.sessionId ?? "(unknown)";
   lines.push(`Copilot Cost for session ${sessionId}`);
+  const isResumed = data.sessionUsage?.logicalSession?.isResumed === true;
+  if (isResumed) {
+    const logicalSession = data.sessionUsage.logicalSession;
+    lines.push(`Logical session: ${logicalSession.instanceCount} resumed instances (${logicalSession.id})`);
+  }
 
   if (data.usageBased?.error) {
     lines.push(`Usage-based: unavailable (${data.usageBased.error})`);
   } else if (data.usageBased) {
     lines.push(`Usage-based estimate: ${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
+    if (isResumed && data.aggregateUsageBased && !data.aggregateUsageBased.error) {
+      lines.push(`Logical session usage total: ${formatMoney(data.aggregateUsageBased.totalUsd, "USD")} (${data.aggregateUsageBased.aiCredits} AI credits)`);
+    }
     lines.push(`Plan allowance: ${formatAiCreditAllotment(data.usageBased)} for ${data.usageBased.plan}`);
   }
 
@@ -373,6 +424,9 @@ function formatCostCommandOutput(data) {
     lines.push(`Premium requests: unavailable (${data.premiumRequests.error})`);
   } else if (data.premiumRequests) {
     lines.push(`Premium requests: ${data.premiumRequests.totalPremiumRequests} PRU (${formatMoney(data.premiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
+    if (isResumed && data.aggregatePremiumRequests && !data.aggregatePremiumRequests.error) {
+      lines.push(`Logical session premium requests: ${data.aggregatePremiumRequests.totalPremiumRequests} PRU (${formatMoney(data.aggregatePremiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
+    }
     lines.push(`Included monthly PRUs: ${data.premiumRequests.includedPremiumRequests} for ${data.premiumRequests.plan}`);
   }
 

@@ -143,6 +143,8 @@ The statusline bridge prints a compact segment:
 💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
 ```
 
+The generated statusline launcher is workspace-aware. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
+
 ## Use
 
 ```text
@@ -212,6 +214,8 @@ macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 
 The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
 
+When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances. If premium request counters look cumulative across a resume, the aggregate uses the latest cumulative value instead of summing and double-counting it.
+
 ## Statusline passthrough
 
 Set `COPILOT_COST_STATUSLINE_PASSTHROUGH` to call another statusline command. The default passthrough mode enriches the stdin JSON with `copilot_cost` and lets the inner statusline render all output.
@@ -237,6 +241,16 @@ The enriched payload includes:
   "copilot_cost": {
     "schema_version": 1,
     "status_line": "💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out",
+    "aggregate_usage_based": {
+      "billingModel": "usage-based",
+      "totalUsd": 0.305869,
+      "aiCredits": 30.5869
+    },
+    "aggregate_premium_requests": {
+      "billingModel": "premium-requests",
+      "totalPremiumRequests": 7.5,
+      "overageEquivalentUsd": 0.3
+    },
     "usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
@@ -391,7 +405,7 @@ Non-USD currency values are display estimates. USD remains canonical because Git
 - Reasoning tokens are shown as informational only unless `COPILOT_COST_BILL_REASONING_TOKENS=true`, because GitHub's published Copilot pricing table does not list a separate reasoning-token bucket.
 - Business and Enterprise included credits are pooled at the billing entity level, so a session estimate is not always incremental billable spend.
 - Taxes, regional billing rules, and GitHub billing-account currency handling are not modeled.
-- Statusline per-model attribution depends on successive cumulative payloads and the active model at each refresh.
+- Statusline per-model attribution depends on successive cumulative payloads and the active model at each refresh. Resumed-session aggregation depends on `transcript_path`; without it, live snapshots fall back to the current `session_id` and cannot be linked to previous instances.
 
 ## License
 

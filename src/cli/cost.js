@@ -24,7 +24,7 @@ async function main() {
 
     const sessionUsage = readUsage(args);
     const exchangeRate = await resolveExchangeRate(args);
-    const result = calculateSessionCost(sessionUsage, {
+    const scenario = {
       billingModel: args.billingModel,
       plan: args.plan,
       multiplierSet: args.multiplierSet,
@@ -35,14 +35,18 @@ async function main() {
       billReasoningTokens: args.billReasoningTokens,
       exchangeRateMetadata: exchangeRate.metadata,
       exchangeRates: exchangeRate.exchangeRates
-    });
+    };
+    const result = calculateSessionCost(sessionUsage, scenario);
+    const aggregateResult = sessionUsage.logicalSession?.isResumed && sessionUsage.aggregateUsage
+      ? calculateSessionCost(sessionUsage.aggregateUsage, { ...scenario, premiumRequests: undefined })
+      : null;
 
     if (args.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(aggregateResult ? { current: result, aggregate: aggregateResult } : result, null, 2));
       return;
     }
 
-    printHuman(result);
+    printHuman(result, aggregateResult, sessionUsage);
   } catch (error) {
     console.error(`copilot-cost: ${error.message}`);
     process.exitCode = 1;
@@ -223,8 +227,11 @@ function readUsage(args) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-function printHuman(result) {
+function printHuman(result, aggregateResult, sessionUsage = {}) {
   console.log(`Session: ${result.sessionId ?? "(unknown)"}`);
+  if (sessionUsage.logicalSession?.isResumed) {
+    console.log(`Logical session: ${sessionUsage.logicalSession.instanceCount} resumed instances (${sessionUsage.logicalSession.id})`);
+  }
   console.log(`Plan: ${result.plan}`);
   console.log(`Billing model: ${result.billingModel}`);
   if (result.metricsStale) {
@@ -233,6 +240,9 @@ function printHuman(result) {
 
   if (result.billingModel === "usage-based") {
     console.log(`Cost: ${formatMoney(result.totalUsd, "USD")} (${formatMoney(result.displayTotal, result.currency.code)})`);
+    if (aggregateResult) {
+      console.log(`Logical session cost: ${formatMoney(aggregateResult.totalUsd, "USD")} (${formatMoney(aggregateResult.displayTotal, aggregateResult.currency.code)})`);
+    }
     console.log(`AI credits: ${result.aiCredits}`);
     console.log(`Included monthly credits for plan: ${formatAiCreditAllotment(result)}`);
     console.log(`Currency rate: USD -> ${result.currency.code} ${result.currency.exchangeRate} (${result.currency.source})`);
@@ -246,6 +256,9 @@ function printHuman(result) {
   }
 
   console.log(`Premium requests: ${result.totalPremiumRequests}`);
+  if (aggregateResult) {
+    console.log(`Logical session premium requests: ${aggregateResult.totalPremiumRequests}`);
+  }
   console.log(`Included monthly premium requests for plan: ${result.includedPremiumRequests}`);
   console.log(`Overage-equivalent value: ${formatMoney(result.overageEquivalentUsd, "USD")} (${formatMoney(result.displayOverageEquivalent, result.currency.code)})`);
   console.log(`Premium request overage rate: ${formatMoney(result.premiumRequestUnitUsd, "USD")} per PRU`);

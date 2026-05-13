@@ -3,6 +3,14 @@ import os from "node:os";
 import path from "node:path";
 
 export function readSessionUsageFromEvents(sessionId, options = {}) {
+  return readSessionUsageFromEventsCore(sessionId, options, "latest");
+}
+
+export function readRichestSessionUsageFromEvents(sessionId, options = {}) {
+  return readSessionUsageFromEventsCore(sessionId, options, "richest");
+}
+
+function readSessionUsageFromEventsCore(sessionId, options, mode) {
   if (!sessionId) {
     throw new Error("Session id is required.");
   }
@@ -13,6 +21,7 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
   }
 
   let latestMetricsEvent = null;
+  let richestMetricsEvent = null;
   let latestEvent = null;
   let latestNonHookEvent = null;
   for (const line of fs.readFileSync(eventsPath, "utf8").split(/\r?\n/)) {
@@ -27,14 +36,18 @@ export function readSessionUsageFromEvents(sessionId, options = {}) {
     }
     if (event?.data?.modelMetrics || event?.data?.totalPremiumRequests !== undefined) {
       latestMetricsEvent = event;
+      if (!richestMetricsEvent || eventMetricsWeight(event) > eventMetricsWeight(richestMetricsEvent)) {
+        richestMetricsEvent = event;
+      }
     }
   }
 
-  if (!latestMetricsEvent?.data?.modelMetrics) {
+  const selectedMetricsEvent = mode === "richest" ? richestMetricsEvent : latestMetricsEvent;
+  if (!selectedMetricsEvent?.data?.modelMetrics) {
     throw new Error(`No model metrics found in Copilot session events: ${eventsPath}`);
   }
 
-  return eventMetricsToSessionUsage(sessionId, latestMetricsEvent, latestNonHookEvent ?? latestEvent, eventsPath);
+  return eventMetricsToSessionUsage(sessionId, selectedMetricsEvent, latestNonHookEvent ?? latestEvent, eventsPath);
 }
 
 export function getSessionEventsPath(sessionId, options = {}) {
@@ -86,5 +99,18 @@ function readOptionalNumber(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function eventMetricsWeight(event) {
+  let total = numberOrZero(event?.data?.totalPremiumRequests);
+  for (const metrics of Object.values(event?.data?.modelMetrics ?? {})) {
+    const usage = metrics.usage ?? {};
+    total += numberOrZero(usage.inputTokens)
+      + numberOrZero(usage.cacheReadTokens)
+      + numberOrZero(usage.cacheWriteTokens)
+      + numberOrZero(usage.outputTokens)
+      + numberOrZero(usage.reasoningTokens);
+  }
+  return total;
 }
 

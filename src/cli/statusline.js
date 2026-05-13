@@ -22,10 +22,18 @@ function main() {
     const { sessionUsage } = mergeStatusLinePayload(payload);
     const usageBased = tryCalculate(sessionUsage, "usage-based");
     const premiumRequests = tryCalculate(sessionUsage, "premium-requests");
+    const aggregateUsageBased = sessionUsage.aggregateUsage
+      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based")
+      : null;
+    const aggregatePremiumRequests = sessionUsage.aggregateUsage
+      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests")
+      : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage);
+      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests);
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
+      aggregatePremiumRequests,
+      aggregateUsageBased,
       costLine,
       premiumRequests,
       sessionUsage,
@@ -107,15 +115,26 @@ function tryCalculate(sessionUsage, billingModel) {
   }
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage) {
+function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests) {
   const parts = [];
-  if (usageBased) {
+  const isResumed = sessionUsage.logicalSession?.isResumed === true;
+  if (isResumed && aggregateUsageBased) {
+    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code)}`)} ${dim("total")}`);
+    if (usageBased) {
+      parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`));
+    }
+  } else if (usageBased) {
     parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
   }
-  if (premiumRequests) {
+  if (isResumed && aggregatePremiumRequests) {
+    parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total`));
+  } else if (premiumRequests) {
     parts.push(yellow(`${premiumRequests.totalPremiumRequests} PRU`));
   } else if (sessionUsage.premiumRequests !== undefined) {
     parts.push(yellow(`${sessionUsage.premiumRequests} PRU`));
+  }
+  if (isResumed) {
+    parts.push(dim(`${sessionUsage.logicalSession.instanceCount} instances`));
   }
   if (sessionUsage.lastCallInputTokens !== undefined || sessionUsage.lastCallOutputTokens !== undefined) {
     parts.push(dim(`last ${compact(sessionUsage.lastCallInputTokens ?? 0)} in/${compact(sessionUsage.lastCallOutputTokens ?? 0)} out`));
@@ -124,12 +143,14 @@ function formatStatusLine(usageBased, premiumRequests, sessionUsage) {
   return parts.length > 0 ? `${magenta("💸 Cost")} ${parts.join(dim(" · "))}` : "";
 }
 
-function buildEnrichedPayload(payload, { costLine, premiumRequests, sessionUsage, usageBased }) {
+function buildEnrichedPayload(payload, { aggregatePremiumRequests, aggregateUsageBased, costLine, premiumRequests, sessionUsage, usageBased }) {
   return {
     ...payload,
     copilot_cost: {
       schema_version: 1,
       status_line: costLine,
+      aggregate_usage_based: aggregateUsageBased,
+      aggregate_premium_requests: aggregatePremiumRequests,
       usage_based: usageBased,
       premium_requests: premiumRequests,
       session_usage: sessionUsage
