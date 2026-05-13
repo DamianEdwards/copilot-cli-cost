@@ -87,6 +87,34 @@ export function registerLogicalSessionInstance(sessionUsage, logicalSession, opt
   return index;
 }
 
+export function listLiveSessions(options = {}) {
+  const directory = getLiveSessionStoreDirectory(options);
+  if (!fs.existsSync(directory)) {
+    return [];
+  }
+
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "latest.json")
+    .map((entry) => {
+      const snapshotPath = path.join(directory, entry.name);
+      const sessionUsage = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+      const stat = fs.statSync(snapshotPath);
+      const sessionId = sessionUsage.sessionId ?? path.basename(entry.name, ".json");
+      return {
+        source: "live-session",
+        sessionId,
+        sessionName: sessionUsage.sessionName,
+        workspaceDirectory: sessionUsage.workspaceDirectory,
+        currentModel: sessionUsage.currentModel,
+        metricsTimestamp: sessionUsage.metricsTimestamp,
+        metricsStale: sessionUsage.metricsStale === true,
+        updatedAt: sessionUsage.metricsTimestamp ?? sessionUsage.timestamp ?? stat.mtime.toISOString(),
+        sourcePath: snapshotPath
+      };
+    })
+    .sort(compareUpdatedAtDescending);
+}
+
 export function writeLiveSession(sessionUsage, options = {}) {
   const directory = getLiveSessionStoreDirectory(options);
   fs.mkdirSync(directory, { recursive: true });
@@ -122,6 +150,10 @@ export function getLogicalSessionPath(logicalSessionId, options = {}) {
 
 function getLatestSessionPath(options = {}) {
   return path.join(getLiveSessionStoreDirectory(options), "latest.json");
+}
+
+function compareUpdatedAtDescending(left, right) {
+  return Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? "");
 }
 
 function safeFileName(value) {
