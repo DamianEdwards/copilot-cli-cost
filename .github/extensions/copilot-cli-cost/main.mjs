@@ -365,14 +365,14 @@ function formatCostCommandOutput(data) {
   if (data.usageBased?.error) {
     lines.push(`Usage-based: unavailable (${data.usageBased.error})`);
   } else if (data.usageBased) {
-    lines.push(`Usage-based: ~${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
+    lines.push(`Usage-based estimate: ${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
     lines.push(`Plan allowance: ${formatAiCreditAllotment(data.usageBased)} for ${data.usageBased.plan}`);
   }
 
   if (data.premiumRequests?.error) {
     lines.push(`Premium requests: unavailable (${data.premiumRequests.error})`);
   } else if (data.premiumRequests) {
-    lines.push(`Premium requests: ${data.premiumRequests.totalPremiumRequests} PRU (~${formatMoney(data.premiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
+    lines.push(`Premium requests: ${data.premiumRequests.totalPremiumRequests} PRU (${formatMoney(data.premiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
     lines.push(`Included monthly PRUs: ${data.premiumRequests.includedPremiumRequests} for ${data.premiumRequests.plan}`);
   }
 
