@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { getAppCacheDirectory } from "../src/core/app-cache-dir.js";
 import { calculateSessionCost } from "../src/core/calculate.js";
 import { getFxRateCacheDirectory, getUsdExchangeRate } from "../src/core/fx-rates.js";
-import { getLiveSessionStoreDirectory } from "../src/core/live-session-store.js";
-import { readSessionUsageFromEvents } from "../src/core/session-events.js";
+import { getLiveSessionStoreDirectory, listLiveSessions, writeLiveSession } from "../src/core/live-session-store.js";
+import { listCompletedSessionSummaries, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
 import { usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
 
@@ -438,6 +438,144 @@ test("reads Copilot CLI session shutdown metrics from events jsonl", () => {
   assert.equal(usage.modelUsage[0].cachedInputTokens, 91648);
   assert.equal(usage.modelUsage[0].outputTokens, 1333);
   assert.equal(usage.modelUsage[0].reasoningTokens, 335);
+});
+
+test("lists live session snapshots with searchable metadata", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-live-list-test-"));
+  try {
+    writeLiveSession(
+      {
+        sessionId: "live-session-a",
+        sessionName: "Estimate panel cost",
+        source: "copilot-cli-statusline",
+        timestamp: "2026-05-06T12:00:00.000Z",
+        metricsTimestamp: "2026-05-06T12:00:00.000Z",
+        workspaceDirectory: "D:\\TEST"
+      },
+      { storeDirectory }
+    );
+    writeLiveSession(
+      {
+        sessionId: "live-session-b",
+        source: "copilot-cli-rpc-usage",
+        timestamp: "2026-05-06T12:05:00.000Z",
+        metricsTimestamp: "2026-05-06T12:05:00.000Z"
+      },
+      { storeDirectory }
+    );
+
+    const sessions = listLiveSessions({ storeDirectory });
+
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0].sessionId, "live-session-b");
+    assert.equal(sessions[1].sessionName, "Estimate panel cost");
+    assert.equal(sessions[1].workspaceDirectory, "D:\\TEST");
+    assert.equal(sessions.some((item) => item.sessionId === "latest"), false);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("lists completed sessions that have cost metrics", () => {
+  const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-events-list-test-"));
+  try {
+    const sessionDirectory = path.join(copilotHome, "session-state", "completed-session");
+    fs.mkdirSync(sessionDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDirectory, "workspace.yaml"),
+      [
+        "id: completed-session",
+        "cwd: D:\\WORK",
+        "repository: DamianEdwards/copilot-cli-cost",
+        "branch: damianedwards/issue-14-session-picker",
+        "name: Resume Summary Name",
+        "created_at: 2026-05-06T11:58:00.000Z",
+        "updated_at: 2026-05-06T12:02:00.000Z"
+      ].join("\n")
+    );
+    fs.writeFileSync(
+      path.join(sessionDirectory, "events.jsonl"),
+      [
+        JSON.stringify({
+          type: "session.start",
+          timestamp: "2026-05-06T11:59:00.000Z",
+          data: {
+            sessionName: "Compare historical cost",
+            workspaceDirectory: "D:\\WORK"
+          }
+        }),
+        JSON.stringify({
+          type: "session.shutdown",
+          timestamp: "2026-05-06T12:00:00.000Z",
+          data: {
+            currentModel: "gpt-5.5",
+            totalPremiumRequests: 7.5,
+            modelMetrics: {
+              "gpt-5.5": {
+                requests: { count: 1, cost: 7.5 },
+                usage: {
+                  inputTokens: 135659,
+                  cacheReadTokens: 91648,
+                  outputTokens: 1333
+                }
+              }
+            }
+          }
+        })
+      ].join("\n")
+    );
+
+    const ignoredDirectory = path.join(copilotHome, "session-state", "no-metrics-session");
+    fs.mkdirSync(ignoredDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(ignoredDirectory, "events.jsonl"),
+      `${JSON.stringify({ type: "session.start", timestamp: "2026-05-06T12:01:00.000Z" })}\n`
+    );
+
+    const sessions = listCompletedSessionSummaries({ copilotHome });
+
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].source, "completed");
+    assert.equal(sessions[0].sessionId, "completed-session");
+    assert.equal(sessions[0].sessionName, "Resume Summary Name");
+    assert.equal(sessions[0].workspaceDirectory, "D:\\WORK");
+    assert.equal(sessions[0].repository, "DamianEdwards/copilot-cli-cost");
+    assert.equal(sessions[0].branch, "damianedwards/issue-14-session-picker");
+    assert.equal(sessions[0].updatedAt, "2026-05-06T12:00:00.000Z");
+  } finally {
+    fs.rmSync(copilotHome, { force: true, recursive: true });
+  }
+});
+
+test("reads Copilot resume summary names from workspace metadata", () => {
+  const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-workspace-metadata-test-"));
+  try {
+    const sessionDirectory = path.join(copilotHome, "session-state", "metadata-session");
+    fs.mkdirSync(sessionDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDirectory, "workspace.yaml"),
+      [
+        "id: metadata-session",
+        "cwd: D:\\src\\repo",
+        "git_root: D:\\src\\repo",
+        "repository: DamianEdwards/copilot-cli-cost",
+        "branch: damianedwards/test",
+        "name: Issue 14 review",
+        "user_named: true",
+        "created_at: 2026-05-13T20:16:40.094Z",
+        "updated_at: 2026-05-13T20:16:51.761Z"
+      ].join("\n")
+    );
+
+    const metadata = readSessionWorkspaceMetadata("metadata-session", { copilotHome });
+
+    assert.equal(metadata.sessionName, "Issue 14 review");
+    assert.equal(metadata.workspaceDirectory, "D:\\src\\repo");
+    assert.equal(metadata.repository, "DamianEdwards/copilot-cli-cost");
+    assert.equal(metadata.branch, "damianedwards/test");
+  } finally {
+    fs.rmSync(copilotHome, { force: true, recursive: true });
+  }
 });
 
 test("calculates usage-based billing from Copilot CLI event metrics", () => {

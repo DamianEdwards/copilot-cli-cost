@@ -8,7 +8,12 @@ const elements = {
   pruTotal: document.getElementById("pru-total"),
   raw: document.getElementById("raw"),
   refresh: document.getElementById("refresh"),
+  sessionCurrent: document.getElementById("session-current"),
   sessionId: document.getElementById("session-id"),
+  sessionList: document.getElementById("session-list"),
+  sessionPickerNote: document.getElementById("session-picker-note"),
+  sessionQuery: document.getElementById("session-query"),
+  sessionToggle: document.getElementById("session-toggle"),
   source: document.getElementById("source"),
   status: document.getElementById("status"),
   updatedAt: document.getElementById("updated-at"),
@@ -18,6 +23,9 @@ const elements = {
 };
 let selectedCurrency;
 let selectedPlan;
+let selectedSession = { source: "live" };
+let sessionListOpen = false;
+let sessionItems = [];
 const planAllowances = {
   free: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0, premiumRequests: 50 },
   pro: { baseAiCredits: 1000, flexAiCredits: 500, totalAiCredits: 1500, premiumRequests: 300 },
@@ -37,7 +45,56 @@ const planLabels = {
   student: "Copilot Student"
 };
 
-elements.refresh.addEventListener("click", refresh);
+elements.refresh.addEventListener("click", () => refresh({ reloadSessions: true }));
+elements.sessionCurrent.addEventListener("click", () => {
+  selectedSession = { source: "live" };
+  renderSessionPicker();
+  closeSessionList();
+  refresh();
+});
+elements.sessionToggle.addEventListener("click", () => {
+  if (sessionListOpen) {
+    closeSessionList();
+  } else {
+    openSessionList();
+  }
+});
+elements.sessionList.addEventListener("click", (event) => {
+  const option = event.target.closest(".session-option");
+  if (!option) {
+    return;
+  }
+  const item = sessionItems.find((candidate) => candidate.key === option.dataset.sessionKey);
+  if (item) {
+    selectSession(item);
+  }
+});
+elements.sessionQuery.addEventListener("focus", openSessionList);
+elements.sessionQuery.addEventListener("input", () => {
+  openSessionList();
+  renderSessionPicker();
+});
+elements.sessionQuery.addEventListener("change", () => {
+  if (selectSessionFromQuery({ allowPartial: true })) {
+    refresh();
+  }
+});
+elements.sessionQuery.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeSessionList();
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    openSessionList();
+    elements.sessionList.querySelector(".session-option")?.focus();
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "Enter" && selectSessionFromQuery({ allowPartial: true })) {
+    closeSessionList();
+    refresh();
+  }
+});
 elements.plan.addEventListener("change", () => {
   selectedPlan = elements.plan.value;
   refresh();
@@ -46,21 +103,57 @@ elements.currency.addEventListener("change", () => {
   selectedCurrency = elements.currency.value;
   refresh();
 });
-document.addEventListener("click", openExternalLink);
-setInterval(refresh, 2000);
-refresh();
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".session-picker")) {
+    closeSessionList();
+  }
+  openExternalLink(event);
+});
+setInterval(() => {
+  if (!isSessionPickerActive() && (selectedSession.source === "live" || selectedSession.source === "live-session")) {
+    refresh();
+  }
+}, 2000);
+setInterval(() => {
+  loadSessions().catch((error) => showStatusError(`Unable to refresh session list: ${error.message}`));
+}, 10000);
+initialize();
 
-async function refresh() {
+async function initialize() {
   try {
+    await loadSessions();
+    await refresh();
+  } catch (error) {
+    showStatusError(`Unable to initialize cost panel: ${error.message}`);
+  }
+}
+
+async function loadSessions() {
+  const data = await copilot.listSessions();
+  sessionItems = data.sessions.map((item) => ({
+    ...item,
+    key: sessionKey(item),
+    optionValue: formatSessionOption(item),
+    searchText: formatSessionSearchText(item)
+  }));
+  renderSessionPicker();
+  return data;
+}
+
+async function refresh({ reloadSessions = false } = {}) {
+  try {
+    if (reloadSessions) {
+      await loadSessions();
+    }
+    selectSessionFromQuery();
     const data = await copilot.getCostData({
       ...(selectedPlan ? { plan: selectedPlan } : {}),
-      ...(selectedCurrency ? { currency: selectedCurrency } : {})
+      ...(selectedCurrency ? { currency: selectedCurrency } : {}),
+      ...selectedSessionRequest()
     });
     render(data);
   } catch (error) {
-    elements.status.textContent = `Unable to read live cost data: ${error.message}`;
-    elements.status.className = "status error";
-    elements.status.hidden = false;
+    showStatusError(`Unable to read session cost data: ${error.message}`);
   }
 }
 
@@ -81,6 +174,8 @@ function render(data) {
   elements.status.hidden = true;
   elements.sessionId.textContent = sessionUsage.sessionId ?? "(unknown)";
   elements.source.textContent = sessionUsage.source ?? data.source ?? "-";
+  syncSelectedSessionFromData(data);
+  renderSessionPicker();
 
   if (usageBased?.error) {
     elements.usageTotal.textContent = "Unavailable";
@@ -106,6 +201,180 @@ function render(data) {
   elements.raw.textContent = JSON.stringify(data, null, 2);
 }
 
+function renderSessionPicker() {
+  const selectedItem = sessionItems.find((item) => item.key === sessionKey(selectedSession));
+  if (selectedItem && document.activeElement !== elements.sessionQuery) {
+    elements.sessionQuery.value = selectedItem.optionValue;
+  } else if (selectedSession.source === "live" && document.activeElement !== elements.sessionQuery) {
+    elements.sessionQuery.value = "Current session";
+  }
+
+  const count = sessionItems.length;
+  elements.sessionPickerNote.textContent = count > 0
+    ? `Showing ${formatInteger(count)} sessions. Search by name, ID, workspace, or source.`
+    : "No cached or completed sessions found yet.";
+
+  renderSessionList();
+}
+
+function showStatusError(message) {
+  elements.status.textContent = message;
+  elements.status.className = "status error";
+  elements.status.hidden = false;
+}
+
+function renderSessionList() {
+  const query = getSessionSearchQuery();
+  const groups = getSessionGroups(query);
+  const html = [];
+  for (const group of groups) {
+    if (group.items.length === 0) {
+      continue;
+    }
+    if (group.title) {
+      html.push(`<div class="session-list-heading">${escapeHtml(group.title)}</div>`);
+    }
+    html.push(...group.items.map(renderSessionOption));
+  }
+
+  elements.sessionList.innerHTML = html.length > 0
+    ? html.join("")
+    : "<p class=\"empty\">No sessions found.</p>";
+}
+
+function renderSessionOption(item) {
+  const selected = item.key === sessionKey(selectedSession);
+  const name = item.sessionName || (item.isCurrent ? "Current session" : "(unnamed session)");
+  const meta = [
+    item.sessionId,
+    formatSessionSource(item.source),
+    item.repository,
+    item.branch,
+    item.workspaceDirectory
+  ].filter(Boolean).join(" - ");
+  return `
+    <button type="button" class="session-option${selected ? " selected" : ""}" data-session-key="${escapeHtml(item.key)}" role="option" aria-selected="${selected}">
+      <span class="session-option-title">${escapeHtml(name)}</span>
+      <span class="session-option-meta">${escapeHtml(meta)}</span>
+    </button>
+  `;
+}
+
+function getSessionGroups(query) {
+  if (!query) {
+    return [{ title: undefined, items: sessionItems }];
+  }
+
+  const matching = [];
+  const other = [];
+  for (const item of sessionItems) {
+    if (item.searchText.includes(query)) {
+      matching.push(item);
+    } else {
+      other.push(item);
+    }
+  }
+
+  return [
+    { title: "Matching sessions", items: matching },
+    { title: "Other sessions", items: other }
+  ];
+}
+
+function getSessionSearchQuery() {
+  const query = elements.sessionQuery.value.trim();
+  const selectedItem = sessionItems.find((item) => item.key === sessionKey(selectedSession));
+  if (!query || query === selectedItem?.optionValue) {
+    return "";
+  }
+  return query.toLowerCase();
+}
+
+function openSessionList() {
+  sessionListOpen = true;
+  elements.sessionList.hidden = false;
+  elements.sessionToggle.setAttribute("aria-expanded", "true");
+  renderSessionList();
+}
+
+function closeSessionList() {
+  sessionListOpen = false;
+  elements.sessionList.hidden = true;
+  elements.sessionToggle.setAttribute("aria-expanded", "false");
+}
+
+function isSessionPickerActive() {
+  return sessionListOpen || document.activeElement === elements.sessionQuery || elements.sessionList.contains(document.activeElement);
+}
+
+function selectSession(item) {
+  selectedSession = {
+    source: item.source,
+    sessionId: item.source === "live" ? undefined : item.sessionId
+  };
+  elements.sessionQuery.value = item.optionValue;
+  closeSessionList();
+  renderSessionPicker();
+  refresh();
+}
+
+function selectSessionFromQuery({ allowPartial = false } = {}) {
+  const query = elements.sessionQuery.value.trim();
+  if (!query) {
+    selectedSession = { source: "live" };
+    return true;
+  }
+
+  let match = sessionItems.find((item) => item.optionValue === query);
+  if (!match && allowPartial) {
+    const normalizedQuery = query.toLowerCase();
+    match = sessionItems.find((item) => item.searchText.includes(normalizedQuery));
+  }
+
+  if (!match) {
+    return false;
+  }
+
+  const nextSelection = {
+    source: match.source,
+    sessionId: match.source === "live" ? undefined : match.sessionId
+  };
+  const changed = sessionKey(nextSelection) !== sessionKey(selectedSession);
+  selectedSession = nextSelection;
+  if (changed) {
+    renderSessionPicker();
+  }
+  return changed;
+}
+
+function selectedSessionRequest() {
+  if (selectedSession.source === "live") {
+    return { source: "live" };
+  }
+  return {
+    source: selectedSession.source,
+    sessionId: selectedSession.sessionId
+  };
+}
+
+function syncSelectedSessionFromData(data) {
+  if (selectedSession.source !== "live") {
+    return;
+  }
+
+  const sessionId = data.sessionUsage?.sessionId;
+  if (!sessionId) {
+    return;
+  }
+
+  const currentItem = sessionItems.find((item) => item.source === "live");
+  if (currentItem) {
+    currentItem.sessionId = sessionId;
+    currentItem.searchText = formatSessionSearchText(currentItem);
+    currentItem.optionValue = formatSessionOption(currentItem);
+  }
+}
+
 function renderCurrency(data) {
   const currency = data.usageBased?.currency ?? data.premiumRequests?.currency;
   const currencyCode = currency?.code ?? data.exchangeRate?.quote ?? "USD";
@@ -123,6 +392,41 @@ function renderCurrency(data) {
   const source = rateInfo?.source ?? currency?.source ?? "exchange rate";
   const date = rateInfo?.date ? ` · ${rateInfo.date}` : "";
   elements.currencyNote.textContent = `Currency: 1 USD = ${formatNumber(rate, 6)} ${currencyCode} · ${source}${date}`;
+}
+
+function sessionKey(item) {
+  return `${item.source}:${item.source === "live" ? "current" : item.sessionId ?? ""}`;
+}
+
+function formatSessionOption(item) {
+  const source = formatSessionSource(item.source);
+  const name = item.sessionName || (item.isCurrent ? "Current session" : "(unnamed session)");
+  return item.sessionId ? `${name} - ${item.sessionId} (${source})` : `${name} (${source})`;
+}
+
+function formatSessionSearchText(item) {
+  return [
+    item.sessionName,
+    item.sessionId,
+    item.workspaceDirectory,
+    item.repository,
+    item.branch,
+    item.source,
+    formatSessionSource(item.source)
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function formatSessionSource(source) {
+  if (source === "live") {
+    return "current";
+  }
+  if (source === "live-session") {
+    return "live snapshot";
+  }
+  if (source === "completed") {
+    return "completed";
+  }
+  return source ?? "unknown";
 }
 
 async function openExternalLink(event) {

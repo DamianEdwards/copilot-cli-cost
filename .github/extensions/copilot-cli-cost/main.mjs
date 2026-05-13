@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
 import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
-import { readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
-import { readSessionUsageFromEvents } from "../../../src/core/session-events.js";
+import { listLiveSessions, readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
+import { listCompletedSessionSummaries, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../../../src/core/session-events.js";
 import { usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
@@ -16,6 +16,7 @@ let currentSubscriptionPromise;
 const webview = new CopilotWebview({
   callbacks: {
     getCostData: (options) => getPanelData(options),
+    listSessions: () => listPanelSessions(),
     log: (message, options) => session?.log(String(message), options),
     openExternal: (url) => openExternal(url)
   },
@@ -167,7 +168,51 @@ function parseCostArgs(tokens) {
 }
 
 async function getPanelData(options = {}) {
-  return getCostData({ ...options, source: "live" });
+  return getCostData({ ...options, source: options.source ?? "live" });
+}
+
+async function listPanelSessions() {
+  const currentSessionId = session.sessionId;
+  const currentMetadata = readSessionWorkspaceMetadataSafe(currentSessionId);
+  const current = {
+    source: "live",
+    sessionId: currentSessionId,
+    sessionName: currentMetadata.sessionName ?? "Current session",
+    workspaceDirectory: currentMetadata.workspaceDirectory,
+    repository: currentMetadata.repository,
+    branch: currentMetadata.branch,
+    isCurrent: true,
+    updatedAt: new Date().toISOString()
+  };
+  const liveSessions = listLiveSessions()
+    .filter((item) => item.sessionId !== currentSessionId)
+    .map((item) => withWorkspaceMetadata(item));
+  const completedSessions = listCompletedSessionSummaries({ limit: 200 });
+
+  return {
+    currentSessionId,
+    generatedAt: new Date().toISOString(),
+    sessions: [current, ...liveSessions, ...completedSessions]
+  };
+}
+
+function withWorkspaceMetadata(item) {
+  const metadata = readSessionWorkspaceMetadataSafe(item.sessionId);
+  return {
+    ...item,
+    sessionName: metadata.sessionName ?? item.sessionName,
+    workspaceDirectory: metadata.workspaceDirectory ?? item.workspaceDirectory,
+    repository: metadata.repository ?? item.repository,
+    branch: metadata.branch ?? item.branch
+  };
+}
+
+function readSessionWorkspaceMetadataSafe(sessionId) {
+  try {
+    return readSessionWorkspaceMetadata(sessionId);
+  } catch {
+    return {};
+  }
 }
 
 async function getCostData({
