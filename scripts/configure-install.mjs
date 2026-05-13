@@ -278,7 +278,7 @@ set "installedRoot=${escapeBatchSetValue(installedPluginsDirectory)}"
 if not exist "%installedRoot%" exit /b 0
 set "statusline="
 for /f "delims=" %%F in ('where /r "%installedRoot%" statusline.cmd 2^>nul ^| sort') do (
-  echo(%%F | findstr /i "copilot-cli-cost.*\\\\scripts\\\\statusline.cmd$" >nul
+  echo(%%F | findstr /i "copilot-cli-cost.*\\\\scripts\\\\statusline.cmd" >nul
   if not errorlevel 1 (
     set "statusline=%%F"
     goto run
