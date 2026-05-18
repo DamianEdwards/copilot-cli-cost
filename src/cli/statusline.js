@@ -5,7 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import { calculateSessionCost } from "../core/calculate.js";
 import { getAppCacheDirectory } from "../core/app-cache-dir.js";
-import { formatMoney } from "../core/currency.js";
+import { formatMoney, normalizeCurrency } from "../core/currency.js";
+import { readCachedUsdExchangeRate } from "../core/fx-rates.js";
 import { mergeStatusLinePayload, parseStatusLinePayload } from "../core/statusline-payload.js";
 
 main();
@@ -100,11 +101,13 @@ function readStdin() {
 
 function tryCalculate(sessionUsage, billingModel) {
   try {
+    const { exchangeRates, exchangeRateMetadata } = readExchangeRates();
     return calculateSessionCost(sessionUsage, {
       billingModel,
       plan: process.env.COPILOT_COST_PLAN ?? "pro",
       currency: process.env.COPILOT_COST_CURRENCY ?? "USD",
-      exchangeRates: readExchangeRates(),
+      exchangeRates,
+      exchangeRateMetadata,
       promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
       remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
       billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
@@ -221,9 +224,29 @@ function renderStatusLine(costLine, passthroughLine, args) {
 }
 
 function readExchangeRates() {
-  const code = String(process.env.COPILOT_COST_CURRENCY ?? "USD").toUpperCase();
-  const rate = readNumber(process.env.COPILOT_COST_EXCHANGE_RATE);
-  return rate === undefined ? undefined : { [code]: rate };
+  const code = normalizeCurrency(process.env.COPILOT_COST_CURRENCY ?? "USD");
+  if (code === "USD") return {};
+
+  // Env var takes priority
+  const envRate = readNumber(process.env[`COPILOT_COST_FX_${code}`] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
+  if (envRate !== undefined) {
+    return { exchangeRates: { [code]: envRate } };
+  }
+
+  // Fall back to cache
+  try {
+    const cached = readCachedUsdExchangeRate(code);
+    if (cached) {
+      return {
+        exchangeRates: { [code]: cached.rate },
+        exchangeRateMetadata: { [code]: cached }
+      };
+    }
+  } catch (error) {
+    logDebugError(`failed to read cached ${code} exchange rate`, error);
+  }
+
+  return {};
 }
 
 function readNumber(value) {

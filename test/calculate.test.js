@@ -967,6 +967,8 @@ test("statusline CLI can decorate passthrough statusline output", () => {
         encoding: "utf8",
         env: {
           ...process.env,
+          COPILOT_COST_CURRENCY: "USD",
+          COPILOT_COST_FX_CACHE: storeDirectory,
           COPILOT_COST_STATUSLINE_COLOR: "false",
           COPILOT_COST_LIVE_STORE: storeDirectory
         },
