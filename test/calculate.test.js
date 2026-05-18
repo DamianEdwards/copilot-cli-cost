@@ -986,6 +986,145 @@ test("statusline CLI can decorate passthrough statusline output", () => {
   }
 });
 
+test("statusline CLI reads exchange rate from fx-rates cache", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const fxCacheDirectory = path.join(storeDirectory, "fx");
+  const passthroughPath = path.join(storeDirectory, "passthrough.mjs");
+  try {
+    fs.mkdirSync(fxCacheDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(fxCacheDirectory, "USD-EUR.json"),
+      JSON.stringify({
+        base: "USD",
+        quote: "EUR",
+        rate: 0.5,
+        date: "2026-05-18",
+        fetchedAt: new Date().toISOString(),
+        source: "frankfurter-cache",
+        url: "https://api.frankfurter.dev/v2/rate/USD/EUR"
+      })
+    );
+    fs.writeFileSync(
+      passthroughPath,
+      "import fs from 'node:fs'; const raw = fs.readFileSync(0, 'utf8'); const payload = JSON.parse(raw); const cur = payload.copilot_cost.usage_based.currency; process.stdout.write(`${cur.code} ${cur.exchangeRate} ${cur.source}`);"
+    );
+
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const env = { ...process.env };
+    delete env.COPILOT_COST_EXCHANGE_RATE;
+    delete env.COPILOT_COST_FX_EUR;
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--passthrough",
+        `"${process.execPath}" "${passthroughPath}"`
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          COPILOT_COST_CURRENCY: "EUR",
+          COPILOT_COST_FX_CACHE: fxCacheDirectory,
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "EUR 0.5 frankfurter-cache");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline CLI falls back to USD when no exchange rate is available", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const fxCacheDirectory = path.join(storeDirectory, "fx-empty");
+  const passthroughPath = path.join(storeDirectory, "passthrough.mjs");
+  try {
+    fs.mkdirSync(fxCacheDirectory, { recursive: true });
+    fs.writeFileSync(
+      passthroughPath,
+      "import fs from 'node:fs'; const raw = fs.readFileSync(0, 'utf8'); const payload = JSON.parse(raw); process.stdout.write(payload.copilot_cost.usage_based.currency.code);"
+    );
+
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const env = { ...process.env };
+    delete env.COPILOT_COST_EXCHANGE_RATE;
+    delete env.COPILOT_COST_FX_EUR;
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--passthrough",
+        `"${process.execPath}" "${passthroughPath}"`
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          COPILOT_COST_CURRENCY: "EUR",
+          COPILOT_COST_FX_CACHE: fxCacheDirectory,
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "USD");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline CLI uses env var source name in exchange-rate metadata", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const passthroughPath = path.join(storeDirectory, "passthrough.mjs");
+  try {
+    fs.writeFileSync(
+      passthroughPath,
+      "import fs from 'node:fs'; const raw = fs.readFileSync(0, 'utf8'); const payload = JSON.parse(raw); const cur = payload.copilot_cost.usage_based.currency; process.stdout.write(`${cur.code} ${cur.exchangeRate} ${cur.source}`);"
+    );
+
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const env = { ...process.env };
+    delete env.COPILOT_COST_EXCHANGE_RATE;
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--passthrough",
+        `"${process.execPath}" "${passthroughPath}"`
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          COPILOT_COST_CURRENCY: "EUR",
+          COPILOT_COST_FX_EUR: "0.75",
+          COPILOT_COST_FX_CACHE: storeDirectory,
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "EUR 0.75 COPILOT_COST_FX_EUR");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
 test("statusline launcher prefers copilot-cli-cost checkout from payload cwd", () => {
   const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
   try {

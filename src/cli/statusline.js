@@ -21,13 +21,14 @@ function main() {
 
     const payload = parseStatusLinePayload(raw);
     const { sessionUsage } = mergeStatusLinePayload(payload);
-    const usageBased = tryCalculate(sessionUsage, "usage-based");
-    const premiumRequests = tryCalculate(sessionUsage, "premium-requests");
+    const currencyConfig = resolveCurrencyConfig();
+    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig);
+    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig);
     const aggregateUsageBased = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based")
+      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig)
       : null;
     const aggregatePremiumRequests = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests")
+      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig)
       : null;
     const costLine = args.hideCost
       ? ""
@@ -99,15 +100,14 @@ function readStdin() {
   }
 }
 
-function tryCalculate(sessionUsage, billingModel) {
+function tryCalculate(sessionUsage, billingModel, currencyConfig) {
   try {
-    const { exchangeRates, exchangeRateMetadata } = readExchangeRates();
     return calculateSessionCost(sessionUsage, {
       billingModel,
       plan: process.env.COPILOT_COST_PLAN ?? "pro",
-      currency: process.env.COPILOT_COST_CURRENCY ?? "USD",
-      exchangeRates,
-      exchangeRateMetadata,
+      currency: currencyConfig.currency,
+      exchangeRates: currencyConfig.exchangeRates,
+      exchangeRateMetadata: currencyConfig.exchangeRateMetadata,
       promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
       remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
       billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
@@ -223,21 +223,39 @@ function renderStatusLine(costLine, passthroughLine, args) {
   return `${passthrough}${args.separator}${cost}`;
 }
 
-function readExchangeRates() {
+function resolveCurrencyConfig() {
   const code = normalizeCurrency(process.env.COPILOT_COST_CURRENCY ?? "USD");
-  if (code === "USD") return {};
-
-  // Env var takes priority
-  const envRate = readNumber(process.env[`COPILOT_COST_FX_${code}`] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
-  if (envRate !== undefined) {
-    return { exchangeRates: { [code]: envRate } };
+  if (code === "USD") {
+    return { currency: "USD" };
   }
 
-  // Fall back to cache
+  // Env var takes priority
+  const perCurrencyVar = `COPILOT_COST_FX_${code}`;
+  const envSource = process.env[perCurrencyVar] !== undefined
+    ? perCurrencyVar
+    : (process.env.COPILOT_COST_EXCHANGE_RATE !== undefined ? "COPILOT_COST_EXCHANGE_RATE" : null);
+  const envRate = readNumber(process.env[perCurrencyVar] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
+  if (envRate !== undefined && envSource) {
+    return {
+      currency: code,
+      exchangeRates: { [code]: envRate },
+      exchangeRateMetadata: {
+        [code]: {
+          base: "USD",
+          quote: code,
+          rate: envRate,
+          source: envSource
+        }
+      }
+    };
+  }
+
+  // Fall back to fx-rates cache
   try {
     const cached = readCachedUsdExchangeRate(code);
     if (cached) {
       return {
+        currency: code,
         exchangeRates: { [code]: cached.rate },
         exchangeRateMetadata: { [code]: cached }
       };
@@ -246,7 +264,12 @@ function readExchangeRates() {
     logDebugError(`failed to read cached ${code} exchange rate`, error);
   }
 
-  return {};
+  // No rate available: degrade to USD so the cost segment still renders.
+  logDebugError(
+    `no USD-to-${code} exchange rate available`,
+    new Error("falling back to USD for statusline display")
+  );
+  return { currency: "USD" };
 }
 
 function readNumber(value) {
