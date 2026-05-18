@@ -32,7 +32,7 @@ function main() {
       : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests);
+      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale());
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
       aggregatePremiumRequests,
       aggregateUsageBased,
@@ -118,16 +118,16 @@ function tryCalculate(sessionUsage, billingModel, currencyConfig) {
   }
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests) {
+function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale) {
   const parts = [];
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   if (isResumed && aggregateUsageBased) {
-    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code)}`)} ${dim("total")}`);
+    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim("total")}`);
     if (usageBased) {
-      parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`));
+      parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`));
     }
   } else if (usageBased) {
-    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
+    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
   }
   if (isResumed && aggregatePremiumRequests) {
     parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total`));
@@ -221,6 +221,13 @@ function renderStatusLine(costLine, passthroughLine, args) {
   }
 
   return `${passthrough}${args.separator}${cost}`;
+}
+
+function resolveLocale() {
+  const value = process.env.COPILOT_COST_LOCALE;
+  if (!value) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function resolveCurrencyConfig() {
