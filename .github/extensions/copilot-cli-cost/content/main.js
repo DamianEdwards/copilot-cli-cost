@@ -477,7 +477,12 @@ function renderCurrentPlan(currentSubscription, activePlan) {
   if (currentPlan) {
     const currentLabel = planLabels[currentPlan] ?? currentPlan;
     const qualifier = currentSubscription.inferred ? "assumed" : "current";
-    elements.currentPlan.textContent = `${capitalize(qualifier)} subscription: ${currentLabel}${currentSubscription.login ? ` (${currentSubscription.login})` : ""}`;
+    const envOverride = currentSubscription.source === "COPILOT_COST_PLAN";
+    const detectedPlan = currentSubscription.detectedPlan;
+    const overrideSuffix = envOverride
+      ? ` (via COPILOT_COST_PLAN${detectedPlan ? `, detected: ${planLabels[detectedPlan] ?? detectedPlan}` : ""})`
+      : "";
+    elements.currentPlan.textContent = `${capitalize(qualifier)} subscription: ${currentLabel}${currentSubscription.login ? ` (${currentSubscription.login})` : ""}${overrideSuffix}`;
   } else {
     const rawPlan = currentSubscription?.rawPlan ? ` (${currentSubscription.rawPlan})` : "";
     elements.currentPlan.textContent = `Current subscription: unavailable${rawPlan}`;
