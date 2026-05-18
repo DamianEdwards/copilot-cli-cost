@@ -224,7 +224,7 @@ async function getCostData({
 } = {}) {
   const sessionUsage = await readUsage({ sessionId, source });
   const currentSubscription = await getCurrentSubscription();
-  const resolvedPlan = plan ?? currentSubscription.plan ?? process.env.COPILOT_COST_PLAN ?? "pro";
+  const resolvedPlan = plan ?? currentSubscription.plan ?? "pro";
   const exchangeRate = await resolveExchangeRate(currency);
   const scenario = {
     billingModel,
@@ -273,7 +273,10 @@ async function getCostData({
 async function getCurrentSubscription() {
   const subscription = await (currentSubscriptionPromise ??= readCurrentSubscription());
   const configuredPlan = process.env.COPILOT_COST_PLAN ? mapCopilotPlan(process.env.COPILOT_COST_PLAN) : undefined;
-  if (subscription.plan || !configuredPlan) {
+  if (!configuredPlan) {
+    return subscription;
+  }
+  if (subscription.plan === configuredPlan) {
     return subscription;
   }
   return {
@@ -281,6 +284,9 @@ async function getCurrentSubscription() {
     plan: configuredPlan,
     rawPlan: process.env.COPILOT_COST_PLAN,
     source: "COPILOT_COST_PLAN",
+    detectedPlan: subscription.plan,
+    detectedRawPlan: subscription.rawPlan,
+    detectedSource: subscription.source,
     statusMessage: subscription.statusMessage
   };
 }
