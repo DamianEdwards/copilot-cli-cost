@@ -105,6 +105,12 @@ fi
 node "$installer"
 ```
 
+When you're developing from a local checkout and want the user-level extension pinned to that checkout instead of the cached installed-plugin copy, run the installer from the checkout itself:
+
+```powershell
+node .\scripts\install-extension-shim.mjs
+```
+
 Configure `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup. Use your machine's statusline launcher path:
 
 ```jsonc
