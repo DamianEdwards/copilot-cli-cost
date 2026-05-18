@@ -5,7 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import { calculateSessionCost } from "../core/calculate.js";
 import { getAppCacheDirectory } from "../core/app-cache-dir.js";
-import { formatMoney } from "../core/currency.js";
+import { formatMoney, normalizeCurrency } from "../core/currency.js";
+import { readCachedUsdExchangeRate } from "../core/fx-rates.js";
 import { mergeStatusLinePayload, parseStatusLinePayload } from "../core/statusline-payload.js";
 
 main();
@@ -20,17 +21,18 @@ function main() {
 
     const payload = parseStatusLinePayload(raw);
     const { sessionUsage } = mergeStatusLinePayload(payload);
-    const usageBased = tryCalculate(sessionUsage, "usage-based");
-    const premiumRequests = tryCalculate(sessionUsage, "premium-requests");
+    const currencyConfig = resolveCurrencyConfig();
+    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig);
+    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig);
     const aggregateUsageBased = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based")
+      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig)
       : null;
     const aggregatePremiumRequests = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests")
+      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig)
       : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests);
+      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale());
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
       aggregatePremiumRequests,
       aggregateUsageBased,
@@ -98,13 +100,14 @@ function readStdin() {
   }
 }
 
-function tryCalculate(sessionUsage, billingModel) {
+function tryCalculate(sessionUsage, billingModel, currencyConfig) {
   try {
     return calculateSessionCost(sessionUsage, {
       billingModel,
       plan: process.env.COPILOT_COST_PLAN ?? "pro",
-      currency: process.env.COPILOT_COST_CURRENCY ?? "USD",
-      exchangeRates: readExchangeRates(),
+      currency: currencyConfig.currency,
+      exchangeRates: currencyConfig.exchangeRates,
+      exchangeRateMetadata: currencyConfig.exchangeRateMetadata,
       promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
       remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
       billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
@@ -115,16 +118,16 @@ function tryCalculate(sessionUsage, billingModel) {
   }
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests) {
+function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale) {
   const parts = [];
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   if (isResumed && aggregateUsageBased) {
-    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code)}`)} ${dim("total")}`);
+    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim("total")}`);
     if (usageBased) {
-      parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`));
+      parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`));
     }
   } else if (usageBased) {
-    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
+    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
   }
   if (isResumed && aggregatePremiumRequests) {
     parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total`));
@@ -220,10 +223,60 @@ function renderStatusLine(costLine, passthroughLine, args) {
   return `${passthrough}${args.separator}${cost}`;
 }
 
-function readExchangeRates() {
-  const code = String(process.env.COPILOT_COST_CURRENCY ?? "USD").toUpperCase();
-  const rate = readNumber(process.env.COPILOT_COST_EXCHANGE_RATE);
-  return rate === undefined ? undefined : { [code]: rate };
+function resolveLocale() {
+  const value = process.env.COPILOT_COST_LOCALE;
+  if (!value) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function resolveCurrencyConfig() {
+  const code = normalizeCurrency(process.env.COPILOT_COST_CURRENCY ?? "USD");
+  if (code === "USD") {
+    return { currency: "USD" };
+  }
+
+  // Env var takes priority
+  const perCurrencyVar = `COPILOT_COST_FX_${code}`;
+  const envSource = process.env[perCurrencyVar] !== undefined
+    ? perCurrencyVar
+    : (process.env.COPILOT_COST_EXCHANGE_RATE !== undefined ? "COPILOT_COST_EXCHANGE_RATE" : null);
+  const envRate = readNumber(process.env[perCurrencyVar] ?? process.env.COPILOT_COST_EXCHANGE_RATE);
+  if (envRate !== undefined && envSource) {
+    return {
+      currency: code,
+      exchangeRates: { [code]: envRate },
+      exchangeRateMetadata: {
+        [code]: {
+          base: "USD",
+          quote: code,
+          rate: envRate,
+          source: envSource
+        }
+      }
+    };
+  }
+
+  // Fall back to fx-rates cache
+  try {
+    const cached = readCachedUsdExchangeRate(code);
+    if (cached) {
+      return {
+        currency: code,
+        exchangeRates: { [code]: cached.rate },
+        exchangeRateMetadata: { [code]: cached }
+      };
+    }
+  } catch (error) {
+    logDebugError(`failed to read cached ${code} exchange rate`, error);
+  }
+
+  // No rate available: degrade to USD so the cost segment still renders.
+  logDebugError(
+    `no USD-to-${code} exchange rate available`,
+    new Error("falling back to USD for statusline display")
+  );
+  return { currency: "USD" };
 }
 
 function readNumber(value) {
