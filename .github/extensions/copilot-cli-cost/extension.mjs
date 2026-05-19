@@ -1,4 +1,7 @@
-import { bootstrap } from "./lib/copilot-webview.js";
+const loadPromiseKey = Symbol.for("copilot-cli-cost.extension.loadPromise");
 
-await bootstrap(import.meta.dirname);
-await import("./main.mjs");
+await (globalThis[loadPromiseKey] ??= (async () => {
+  const { bootstrap } = await import("./lib/copilot-webview.js");
+  await bootstrap(import.meta.dirname);
+  await import("./main.mjs");
+})());
