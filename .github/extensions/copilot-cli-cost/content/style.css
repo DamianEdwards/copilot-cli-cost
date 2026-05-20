@@ -280,6 +280,36 @@ small {
   overflow-wrap: anywhere;
 }
 
+.allowance-meter {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.allowance-meter[hidden] {
+  display: none;
+}
+
+.allowance-meter-bar {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.allowance-meter-bar span {
+  background: linear-gradient(90deg, #238636, #2f81f7);
+  display: block;
+  height: 100%;
+}
+
+.allowance-meter p {
+  color: #8b949e;
+  font-size: 12px;
+  margin: 0;
+}
+
 .breakdown {
   display: grid;
   gap: 10px;
