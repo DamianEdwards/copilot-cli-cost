@@ -8,6 +8,7 @@ import { getAppCacheDirectory } from "../core/app-cache-dir.js";
 import { formatMoney, normalizeCurrency } from "../core/currency.js";
 import { readCachedUsdExchangeRate } from "../core/fx-rates.js";
 import { mergeStatusLinePayload, parseStatusLinePayload } from "../core/statusline-payload.js";
+import { resolveCurrentPlanInfo } from "../core/subscription.js";
 
 main();
 
@@ -22,17 +23,18 @@ function main() {
     const payload = parseStatusLinePayload(raw);
     const { sessionUsage } = mergeStatusLinePayload(payload);
     const currencyConfig = resolveCurrencyConfig();
-    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig);
-    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig);
+    const planInfo = resolveStatusLinePlan();
+    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig, planInfo.plan);
+    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig, planInfo.plan);
     const aggregateUsageBased = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig)
+      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig, planInfo.plan)
       : null;
     const aggregatePremiumRequests = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig)
+      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig, planInfo.plan)
       : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale());
+      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale(), planInfo);
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
       aggregatePremiumRequests,
       aggregateUsageBased,
@@ -100,11 +102,11 @@ function readStdin() {
   }
 }
 
-function tryCalculate(sessionUsage, billingModel, currencyConfig) {
+function tryCalculate(sessionUsage, billingModel, currencyConfig, plan) {
   try {
     return calculateSessionCost(sessionUsage, {
       billingModel,
-      plan: process.env.COPILOT_COST_PLAN ?? "pro",
+      plan,
       currency: currencyConfig.currency,
       exchangeRates: currencyConfig.exchangeRates,
       exchangeRateMetadata: currencyConfig.exchangeRateMetadata,
@@ -118,21 +120,37 @@ function tryCalculate(sessionUsage, billingModel, currencyConfig) {
   }
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale) {
+function resolveStatusLinePlan() {
+  try {
+    const resolved = resolveCurrentPlanInfo();
+    if (resolved.plan) {
+      return resolved;
+    }
+  } catch (error) {
+    logDebugError("failed to read current subscription plan", error);
+  }
+  return {
+    assumed: true,
+    plan: "pro",
+    source: "fallback"
+  };
+}
+
+function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale, planInfo) {
   const parts = [];
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   if (isResumed && aggregateUsageBased) {
-    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim("total")}`);
+    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim(`total${formatAllowanceShare(aggregateUsageBased, planInfo)}`)}`);
     if (usageBased) {
       parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`));
     }
   } else if (usageBased) {
-    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
+    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr${formatAllowanceShare(usageBased, planInfo)})`)}`);
   }
   if (isResumed && aggregatePremiumRequests) {
-    parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total`));
+    parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total${formatAllowanceShare(aggregatePremiumRequests, planInfo)}`));
   } else if (premiumRequests) {
-    parts.push(yellow(`${premiumRequests.totalPremiumRequests} PRU`));
+    parts.push(yellow(`${premiumRequests.totalPremiumRequests} PRU${formatAllowanceShare(premiumRequests, planInfo)}`));
   } else if (sessionUsage.premiumRequests !== undefined) {
     parts.push(yellow(`${sessionUsage.premiumRequests} PRU`));
   }
@@ -144,6 +162,40 @@ function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUs
   }
 
   return parts.length > 0 ? `${magenta("💸 Cost")} ${parts.join(dim(" · "))}` : "";
+}
+
+function formatAllowanceShare(result, planInfo) {
+  const percentage = readPercentage(result?.allowanceUsagePercentage);
+  if (percentage === null) {
+    return "";
+  }
+  const plan = formatPlanLabel(result, planInfo);
+  return `, ${formatPercentage(percentage)}${plan}`;
+}
+
+function formatPlanLabel(result, planInfo) {
+  const plan = result?.plan;
+  if (!plan) {
+    return "";
+  }
+  return planInfo?.assumed === true && planInfo.plan === plan
+    ? ` assumed ${plan}`
+    : ` ${plan}`;
+}
+
+function readPercentage(value) {
+  const percentage = Number(value);
+  return Number.isFinite(percentage) && percentage >= 0 ? percentage : null;
+}
+
+function formatPercentage(value) {
+  if (value > 0 && value < 0.1) {
+    return "<0.1%";
+  }
+  if (value < 10) {
+    return `${round(value)}%`;
+  }
+  return `${Math.round(value)}%`;
 }
 
 function buildEnrichedPayload(payload, { aggregatePremiumRequests, aggregateUsageBased, costLine, premiumRequests, sessionUsage, usageBased }) {

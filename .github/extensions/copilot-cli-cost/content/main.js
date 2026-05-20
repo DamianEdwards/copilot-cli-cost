@@ -4,6 +4,7 @@ const elements = {
   currencyNote: document.getElementById("currency-note"),
   currentPlan: document.getElementById("current-plan"),
   plan: document.getElementById("plan"),
+  pruAllowance: document.getElementById("pru-allowance"),
   pruSubtitle: document.getElementById("pru-subtitle"),
   pruTotal: document.getElementById("pru-total"),
   raw: document.getElementById("raw"),
@@ -17,6 +18,7 @@ const elements = {
   source: document.getElementById("source"),
   status: document.getElementById("status"),
   updatedAt: document.getElementById("updated-at"),
+  usageAllowance: document.getElementById("usage-allowance"),
   usageSubtitle: document.getElementById("usage-subtitle"),
   usageTotal: document.getElementById("usage-total"),
   whatIfNote: document.getElementById("what-if-note")
@@ -185,31 +187,37 @@ function render(data) {
   if (usageBased?.error) {
     elements.usageTotal.textContent = "Unavailable";
     elements.usageSubtitle.textContent = usageBased.error;
+    hideAllowanceMeter(elements.usageAllowance);
   } else {
     const usagePlan = selectedPlan ?? usageBased.plan;
-    const includedAiCreditAllotment = readAiCreditAllotment(usageBased, usagePlan);
     const displayedUsage = isResumed && aggregateUsageBased && !aggregateUsageBased.error
       ? aggregateUsageBased
       : usageBased;
+    const includedAiCreditAllotment = readAiCreditAllotment(displayedUsage, usagePlan);
+    const allowanceUsage = formatAiCreditAllowanceUsage(displayedUsage.allowanceUsagePercentage, includedAiCreditAllotment);
     elements.usageTotal.textContent = formatCurrency(displayedUsage.displayTotal, displayedUsage.currency.code);
     elements.usageSubtitle.textContent = isResumed && displayedUsage === aggregateUsageBased
-      ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${usagePlan}`
-      : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${formatAiCreditAllotment(includedAiCreditAllotment)} · ${usagePlan}`;
+      ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`
+      : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`;
+    updateAllowanceMeter(elements.usageAllowance, displayedUsage.allowanceUsagePercentage, allowanceUsage);
   }
 
   if (premiumRequests?.error) {
     elements.pruTotal.textContent = "Unavailable";
     elements.pruSubtitle.textContent = premiumRequests.error;
+    hideAllowanceMeter(elements.pruAllowance);
   } else {
     const pruPlan = selectedPlan ?? premiumRequests.plan;
-    const includedPremiumRequests = planAllowances[pruPlan]?.premiumRequests ?? premiumRequests.includedPremiumRequests;
     const displayedPremiumRequests = isResumed && aggregatePremiumRequests && !aggregatePremiumRequests.error
       ? aggregatePremiumRequests
       : premiumRequests;
+    const includedPremiumRequests = displayedPremiumRequests.includedPremiumRequests ?? planAllowances[pruPlan]?.premiumRequests ?? 0;
+    const allowanceUsage = formatAllowanceUsage(displayedPremiumRequests.allowanceUsagePercentage, includedPremiumRequests);
     elements.pruTotal.textContent = `${formatNumber(displayedPremiumRequests.totalPremiumRequests, 2)} PRU`;
     elements.pruSubtitle.textContent = isResumed && displayedPremiumRequests === aggregatePremiumRequests
-      ? `logical total · this instance ${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU · ${formatCurrency(displayedPremiumRequests.displayOverageEquivalent, displayedPremiumRequests.currency.code)} overage-equivalent · ${pruPlan}`
-      : `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${formatNumber(includedPremiumRequests, 0)} included · ${pruPlan}`;
+      ? `logical total · this instance ${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU · ${formatCurrency(displayedPremiumRequests.displayOverageEquivalent, displayedPremiumRequests.currency.code)} overage-equivalent · ${allowanceUsage} · ${pruPlan}`
+      : `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${allowanceUsage} · ${pruPlan}`;
+    updateAllowanceMeter(elements.pruAllowance, displayedPremiumRequests.allowanceUsagePercentage, allowanceUsage);
   }
 
   renderBreakdown(usageBased);
@@ -520,6 +528,56 @@ function formatAiCreditAllotment(allotment) {
     return `${total} included`;
   }
   return `${total} included (${formatNumber(allotment.baseAiCredits, 1)} base + ${formatNumber(flex, 1)} flex)`;
+}
+
+function formatAiCreditAllowanceUsage(percentage, allotment) {
+  const percentageText = formatPercentage(readPercentage(percentage));
+  const allotmentText = formatAiCreditAllotment(allotment);
+  return percentageText ? `${percentageText} of ${allotmentText}` : allotmentText;
+}
+
+function formatAllowanceUsage(percentage, allowance) {
+  const allowanceValue = Number(allowance ?? 0);
+  const allowanceText = `${formatNumber(allowanceValue, 1)} included`;
+  const percentageText = formatPercentage(readPercentage(percentage));
+  return percentageText ? `${percentageText} of ${allowanceText}` : allowanceText;
+}
+
+function updateAllowanceMeter(element, percentage, label) {
+  const percentageValue = readPercentage(percentage);
+  if (percentageValue === null) {
+    hideAllowanceMeter(element);
+    return;
+  }
+
+  const clampedPercentage = Math.min(percentageValue, 100);
+  element.hidden = false;
+  element.innerHTML = `
+    <div class="allowance-meter-bar" aria-hidden="true">
+      <span style="width: ${clampedPercentage}%"></span>
+    </div>
+    <p>${escapeHtml(label)}</p>
+  `;
+}
+
+function hideAllowanceMeter(element) {
+  element.hidden = true;
+  element.innerHTML = "";
+}
+
+function readPercentage(value) {
+  const percentage = Number(value);
+  return Number.isFinite(percentage) && percentage >= 0 ? percentage : null;
+}
+
+function formatPercentage(value) {
+  if (value === null) {
+    return "";
+  }
+  if (value > 0 && value < 0.1) {
+    return "<0.1%";
+  }
+  return `${formatNumber(value, value < 10 ? 1 : 0)}%`;
 }
 
 function capitalize(value) {

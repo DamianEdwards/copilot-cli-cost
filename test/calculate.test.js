@@ -12,6 +12,7 @@ import { getFxRateCacheDirectory, getUsdExchangeRate } from "../src/core/fx-rate
 import { getLiveSessionStoreDirectory, listLiveSessions, readLiveSession, writeLiveSession } from "../src/core/live-session-store.js";
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
+import { writeCurrentSubscriptionCache } from "../src/core/subscription.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
 
 const sessionUsage = {
@@ -45,6 +46,7 @@ test("calculates usage-based billing from token buckets", () => {
   assert.equal(result.totalUsd, 49.55);
   assert.equal(result.aiCredits, 4955);
   assert.equal(result.includedAiCredits, 1500);
+  assert.equal(result.allowanceUsagePercentage, 330.333333);
   assert.deepEqual(result.includedAiCreditAllotment, {
     baseAiCredits: 1000,
     flexAiCredits: 500,
@@ -75,6 +77,11 @@ test("calculates usage-based allowances with individual flex allotments", () => 
     plan: "Copilot Max",
     currency: "USD"
   });
+  const free = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    plan: "free",
+    currency: "USD"
+  });
 
   assert.equal(proPlus.plan, "pro-plus");
   assert.equal(proPlus.includedAiCredits, 7000);
@@ -90,6 +97,8 @@ test("calculates usage-based allowances with individual flex allotments", () => 
     flexAiCredits: 10000,
     totalAiCredits: 20000
   });
+  assert.equal(free.includedAiCredits, 0);
+  assert.equal(free.allowanceUsagePercentage, null);
 });
 
 test("calculates usage-based input billing from uncached input tokens", () => {
@@ -191,6 +200,7 @@ test("calculates premium request billing from model multipliers", () => {
 
   assert.equal(result.totalPremiumRequests, 16);
   assert.equal(result.includedPremiumRequests, 1500);
+  assert.equal(result.allowanceUsagePercentage, 1.066667);
 });
 
 test("calculates premium request billing from direct PRU count", () => {
@@ -212,6 +222,7 @@ test("calculates premium request billing from direct PRU count", () => {
 
   assert.equal(result.source, "direct-premium-requests");
   assert.equal(result.totalPremiumRequests, 12.5);
+  assert.equal(result.allowanceUsagePercentage, 4.166667);
   assert.equal(result.overageEquivalentUsd, 0.5);
   assert.equal(result.displayOverageEquivalent, 0.45);
   assert.equal(result.billablePremiumRequests, 2.5);
@@ -970,6 +981,7 @@ test("statusline CLI can decorate passthrough statusline output", () => {
           COPILOT_COST_CURRENCY: "USD",
           COPILOT_COST_FX_CACHE: storeDirectory,
           COPILOT_COST_LOCALE: "en-US",
+          COPILOT_COST_PLAN: "pro",
           COPILOT_COST_STATUSLINE_COLOR: "false",
           COPILOT_COST_LIVE_STORE: storeDirectory
         },
@@ -980,8 +992,128 @@ test("statusline CLI can decorate passthrough statusline output", () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^base gpt-5\.5 · 💸 Cost /);
-    assert.match(result.stdout, /~\$0\.3059 \(30\.6 cr\)/);
-    assert.match(result.stdout, /7\.5 PRU/);
+    assert.match(result.stdout, /~\$0\.3059 \(30\.6 cr, 2% pro\)/);
+    assert.match(result.stdout, /7\.5 PRU, 2\.5% pro/);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline CLI shows allowance percentage for the configured plan", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--mode",
+        "standalone"
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          COPILOT_COST_CURRENCY: "USD",
+          COPILOT_COST_LOCALE: "en-US",
+          COPILOT_COST_PLAN: "pro",
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline CLI uses cached detected subscription plan", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const subscriptionCache = path.join(storeDirectory, "current-subscription.json");
+  try {
+    writeCurrentSubscriptionCache(
+      {
+        login: "octocat",
+        plan: "enterprise",
+        rawPlan: "Copilot Enterprise",
+        source: "session.rpc.auth.getStatus"
+      },
+      {
+        env: {
+          COPILOT_COST_SUBSCRIPTION_CACHE: subscriptionCache
+        }
+      }
+    );
+    fs.writeFileSync(subscriptionCache, `\uFEFF${fs.readFileSync(subscriptionCache, "utf8")}`);
+
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const env = { ...process.env };
+    delete env.COPILOT_COST_PLAN;
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--mode",
+        "standalone"
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          COPILOT_COST_CURRENCY: "USD",
+          COPILOT_COST_LOCALE: "en-US",
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory,
+          COPILOT_COST_SUBSCRIPTION_CACHE: subscriptionCache
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 0.8% enterprise) · 7.5 PRU, 0.8% enterprise · last 42K in/3K out");
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("statusline CLI labels fallback plan as assumed", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  const subscriptionCache = path.join(storeDirectory, "missing-subscription.json");
+  try {
+    const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
+    const env = { ...process.env };
+    delete env.COPILOT_COST_PLAN;
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../src/cli/statusline.js", import.meta.url)),
+        "--mode",
+        "standalone"
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          COPILOT_COST_CURRENCY: "USD",
+          COPILOT_COST_LOCALE: "en-US",
+          COPILOT_COST_STATUSLINE_COLOR: "false",
+          COPILOT_COST_LIVE_STORE: storeDirectory,
+          COPILOT_COST_SUBSCRIPTION_CACHE: subscriptionCache
+        },
+        input,
+        shell: false
+      }
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% assumed pro) · 7.5 PRU, 2.5% assumed pro · last 42K in/3K out");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }

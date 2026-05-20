@@ -78,6 +78,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
   const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
   const includedAiCreditAllotment = getIncludedAiCreditAllotment(plan, scenario);
   const includedAiCredits = includedAiCreditAllotment.totalAiCredits;
+  const allowanceUsagePercentage = calculateAllowanceUsagePercentage(aiCredits, includedAiCredits);
 
   return {
     billingModel: "usage-based",
@@ -95,6 +96,7 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
     aiCredits,
     includedAiCreditAllotment,
     includedAiCredits,
+    allowanceUsagePercentage,
     includedCreditsApplied: Math.min(aiCredits, includedAiCredits),
     overageCreditsIfAllowanceExhausted: aiCredits,
     overageUsdIfAllowanceExhausted: totalUsd,
@@ -136,6 +138,7 @@ export function calculatePremiumRequestCost(sessionUsage, scenario = {}) {
   const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
   const totalPremiumRequests = directPremiumRequests ?? roundCost(sum(modelBreakdown, (item) => item.premiumRequests));
   const includedPremiumRequests = planAllowances.premiumRequests[plan] ?? 0;
+  const allowanceUsagePercentage = calculateAllowanceUsagePercentage(totalPremiumRequests, includedPremiumRequests);
   const remainingPremiumRequestsBeforeSession = readOptionalNumber(scenario.remainingPremiumRequests ?? sessionUsage.remainingPremiumRequestsBeforeSession);
   const billablePremiumRequests = remainingPremiumRequestsBeforeSession === undefined
     ? null
@@ -158,6 +161,7 @@ export function calculatePremiumRequestCost(sessionUsage, scenario = {}) {
     source: directPremiumRequests === undefined ? "model-breakdown" : "direct-premium-requests",
     totalPremiumRequests,
     includedPremiumRequests,
+    allowanceUsagePercentage,
     includedPremiumRequestsApplied: Math.min(totalPremiumRequests, includedPremiumRequests),
     remainingPremiumRequestsBeforeSession,
     billablePremiumRequests,
@@ -257,6 +261,14 @@ function getIncludedAiCreditAllotment(plan, scenario) {
     flexAiCredits: 0,
     totalAiCredits: 0
   };
+}
+
+function calculateAllowanceUsagePercentage(usage, allowance) {
+  const allowanceValue = numberOrZero(allowance);
+  if (allowanceValue <= 0) {
+    return null;
+  }
+  return roundCost((numberOrZero(usage) / allowanceValue) * 100);
 }
 
 function costForTokens(tokens, perMillionUsd) {

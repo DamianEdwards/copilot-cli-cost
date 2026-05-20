@@ -146,8 +146,10 @@ macOS/Linux:
 The statusline bridge prints a compact segment:
 
 ```text
-💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
+💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out
 ```
+
+When the SDK extension can detect your current Copilot subscription, the statusline uses that cached plan for allowance percentages. `COPILOT_COST_PLAN` can still override the plan explicitly. If neither is available, the statusline falls back to `assumed pro` so the percentage is not presented as a detected plan.
 
 The generated statusline launcher is workspace-aware. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
 
@@ -156,6 +158,7 @@ The generated statusline launcher is workspace-aware. When Copilot sends a statu
 ```text
 /cost
 /cost help
+/cost update
 /cost panel on
 /cost panel off
 /cost panel refresh
@@ -168,6 +171,8 @@ The generated statusline launcher is workspace-aware. When Copilot sends a statu
 
 `/cost` is handled by extension JavaScript. It does not ask the model to calculate the result.
 
+Use `/cost update` to force the extension to re-detect your current Copilot subscription and rewrite the shared cache used by the statusline. If the host exposes a statusline refresh hook, the command also requests an immediate refresh; otherwise the updated plan appears on the next normal statusline refresh.
+
 The panel opens a native window:
 
 ```text
@@ -178,6 +183,7 @@ The panel shows:
 
 - Usage-based estimate
 - Premium-request estimate
+- Percentage of the selected plan's allowance used by the session
 - Searchable session picker for current, cached live, and completed sessions
 - Selected session ID and data source
 - Current or assumed subscription
@@ -247,7 +253,7 @@ The enriched payload includes:
 {
   "copilot_cost": {
     "schema_version": 1,
-    "status_line": "💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out",
+    "status_line": "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out",
     "aggregate_usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
@@ -331,6 +337,7 @@ copilot
 | `COPILOT_COST_EXCHANGE_RATE` | USD-to-display-currency exchange rate override for `COPILOT_COST_CURRENCY`. |
 | `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
 | `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates` on Windows, `~/Library/Caches/copilot-cli-cost/fx-rates` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates` on Linux. |
+| `COPILOT_COST_SUBSCRIPTION_CACHE` | Current subscription cache file used by the statusline. Defaults to `current-subscription.json` under the platform cache root. |
 | `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
 | `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `true` to include reasoning tokens as output-priced cost. By default they are shown as informational only. |
 

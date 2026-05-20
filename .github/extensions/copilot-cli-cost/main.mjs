@@ -6,6 +6,7 @@ import { formatMoney } from "../../../src/core/currency.js";
 import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
 import { listLiveSessions, readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../../../src/core/session-events.js";
+import { mapCopilotPlan, resolveConfiguredPlan, writeCurrentSubscriptionCache } from "../../../src/core/subscription.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
@@ -68,6 +69,10 @@ session = await joinSession({
   ]
 });
 
+void getCurrentSubscription().catch((error) => {
+  void session.log(`Copilot Cost: unable to detect subscription for statusline: ${error.message}`, { level: "warning" });
+});
+
 async function handleCostCommand(context) {
   const tokens = tokenize(context.args);
   const [verb, subject] = tokens;
@@ -83,6 +88,11 @@ async function handleCostCommand(context) {
   }
 
   try {
+    if (verb === "update") {
+      await handleUpdateCommand();
+      return;
+    }
+
     const parsed = parseCostArgs(tokens);
     const data = await getCostData(parsed);
     await session.log(formatCostCommandOutput(data));
@@ -113,11 +123,23 @@ async function handlePanelCommand(action = "on") {
   await session.log("Usage: /cost panel on|off|refresh", { level: "warning" });
 }
 
+async function handleUpdateCommand() {
+  const subscription = await refreshCurrentSubscription();
+  const statuslineRefresh = await refreshStatusLineSafe();
+  const plan = subscription.plan ? `plan ${subscription.plan}` : "plan unavailable";
+  const source = subscription.source ? ` from ${subscription.source}` : "";
+  const statuslineNote = statuslineRefresh.refreshed
+    ? " Statusline refresh requested."
+    : " Statusline will update on its next refresh.";
+  await session.log(`Copilot Cost cache updated: ${plan}${source}.${statuslineNote}`);
+}
+
 function formatCostHelp() {
   return [
     "Copilot Cost usage",
     "",
     "/cost",
+    "/cost update",
     "/cost panel on|off|refresh",
     "/cost session <session-id>",
     "/cost live-session <session-id>",
@@ -272,23 +294,31 @@ async function getCostData({
 
 async function getCurrentSubscription() {
   const subscription = await (currentSubscriptionPromise ??= readCurrentSubscription());
-  const configuredPlan = process.env.COPILOT_COST_PLAN ? mapCopilotPlan(process.env.COPILOT_COST_PLAN) : undefined;
+  const configuredPlan = resolveConfiguredPlan();
+  let resolvedSubscription;
   if (!configuredPlan) {
-    return subscription;
+    resolvedSubscription = subscription;
+  } else if (subscription.plan === configuredPlan) {
+    resolvedSubscription = subscription;
+  } else {
+    resolvedSubscription = {
+      ...subscription,
+      plan: configuredPlan,
+      rawPlan: process.env.COPILOT_COST_PLAN,
+      source: "COPILOT_COST_PLAN",
+      detectedPlan: subscription.plan,
+      detectedRawPlan: subscription.rawPlan,
+      detectedSource: subscription.source,
+      statusMessage: subscription.statusMessage
+    };
   }
-  if (subscription.plan === configuredPlan) {
-    return subscription;
-  }
-  return {
-    ...subscription,
-    plan: configuredPlan,
-    rawPlan: process.env.COPILOT_COST_PLAN,
-    source: "COPILOT_COST_PLAN",
-    detectedPlan: subscription.plan,
-    detectedRawPlan: subscription.rawPlan,
-    detectedSource: subscription.source,
-    statusMessage: subscription.statusMessage
-  };
+  writeCurrentSubscriptionCacheSafe(resolvedSubscription);
+  return resolvedSubscription;
+}
+
+async function refreshCurrentSubscription() {
+  currentSubscriptionPromise = readCurrentSubscription();
+  return getCurrentSubscription();
 }
 
 async function readCurrentSubscription() {
@@ -313,33 +343,32 @@ async function readCurrentSubscription() {
   }
 }
 
-function mapCopilotPlan(plan) {
-  const normalized = String(plan ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-");
-  if (!normalized) {
-    return undefined;
+async function refreshStatusLineSafe() {
+  const candidates = [
+    session.rpc?.statusLine,
+    session.rpc?.statusline,
+    session.rpc?.statusBar,
+    session.rpc?.statusbar
+  ].filter((candidate) => typeof candidate?.refresh === "function");
+
+  for (const candidate of candidates) {
+    try {
+      await candidate.refresh();
+      return { refreshed: true };
+    } catch (error) {
+      await session.log(`Copilot Cost: statusline refresh failed: ${error.message}`, { level: "warning" });
+    }
   }
-  if (normalized.includes("enterprise")) {
-    return "enterprise";
+
+  return { refreshed: false };
+}
+
+function writeCurrentSubscriptionCacheSafe(subscription) {
+  try {
+    writeCurrentSubscriptionCache(subscription);
+  } catch (error) {
+    void session.log(`Copilot Cost: unable to cache subscription for statusline: ${error.message}`, { level: "warning" });
   }
-  if (normalized.includes("business")) {
-    return "business";
-  }
-  if (normalized.includes("pro+") || normalized.includes("pro-plus") || normalized.includes("proplus")) {
-    return "pro-plus";
-  }
-  if (normalized.includes("max")) {
-    return "max";
-  }
-  if (normalized.includes("student")) {
-    return "student";
-  }
-  if (normalized.includes("free")) {
-    return "free";
-  }
-  if (normalized.includes("pro")) {
-    return "pro";
-  }
-  return normalized;
 }
 
 function openExternal(url) {
