@@ -48,42 +48,14 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
   }
 
   if (!hasUsageReset(currentUsage, previousUsage)) {
-    if (previousUsage.aggregateUsage && usageWeight(currentUsage) === 0 && usageWeight(previousUsage) === 0) {
-      return {
-        ...currentUsage,
-        logicalSession: previousUsage.logicalSession,
-        aggregateUsage: previousUsage.aggregateUsage
-      };
+    if (previousUsage.aggregateUsage) {
+      return refreshResumedAggregate(currentUsage, previousUsage);
     }
     return currentUsage;
   }
 
   const previousAggregate = previousUsage.aggregateUsage ?? previousUsage;
-  const aggregateUsage = {
-    sessionId: previousUsage.logicalSession?.id ?? `session:${currentUsage.sessionId}`,
-    source: "copilot-cli-resumed-session-aggregate",
-    timestamp: currentUsage.timestamp,
-    metricsEventType: "usage.resumed-aggregate",
-    metricsTimestamp: currentUsage.metricsTimestamp,
-    metricsStale: false,
-    currentModel: currentUsage.currentModel ?? previousUsage.currentModel,
-    sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
-    workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
-    transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
-    premiumRequests: aggregatePremiumRequests(previousAggregate.premiumRequests, currentUsage.premiumRequests),
-    totalNanoAiu: aggregatePremiumRequests(previousAggregate.totalNanoAiu, currentUsage.totalNanoAiu),
-    totalApiDurationMs: sumOptional(previousAggregate.totalApiDurationMs, currentUsage.totalApiDurationMs),
-    totalDurationMs: sumOptional(previousAggregate.totalDurationMs, currentUsage.totalDurationMs),
-    totalLinesAdded: sumOptional(previousAggregate.totalLinesAdded, currentUsage.totalLinesAdded),
-    totalLinesRemoved: sumOptional(previousAggregate.totalLinesRemoved, currentUsage.totalLinesRemoved),
-    modelUsage: sumModelUsage(previousAggregate.modelUsage ?? [], currentUsage.modelUsage ?? [])
-  };
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
-  }
-  if (aggregateUsage.totalNanoAiu === undefined) {
-    delete aggregateUsage.totalNanoAiu;
-  }
+  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, previousAggregate, aggregatePremiumRequests);
 
   const priorResetCount = Number(previousUsage.logicalSession?.resetCount ?? 0);
   return {
@@ -104,6 +76,49 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
     },
     aggregateUsage
   };
+}
+
+function refreshResumedAggregate(currentUsage, previousUsage) {
+  const priorHistory = subtractUsage(previousUsage.aggregateUsage, previousUsage);
+  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, priorHistory, sumOptional);
+  return {
+    ...currentUsage,
+    logicalSession: {
+      ...previousUsage.logicalSession,
+      currentInstanceId: currentUsage.sessionId,
+      frozenContributions: readFrozenContributions(previousUsage)
+    },
+    aggregateUsage
+  };
+}
+
+function buildAggregateUsage(currentUsage, previousUsage, previousAggregate, aggregateCounter) {
+  const aggregateUsage = {
+    sessionId: previousUsage.logicalSession?.id ?? `session:${currentUsage.sessionId}`,
+    source: "copilot-cli-resumed-session-aggregate",
+    timestamp: currentUsage.timestamp,
+    metricsEventType: "usage.resumed-aggregate",
+    metricsTimestamp: currentUsage.metricsTimestamp,
+    metricsStale: false,
+    currentModel: currentUsage.currentModel ?? previousUsage.currentModel,
+    sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
+    workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
+    transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
+    premiumRequests: aggregateCounter(previousAggregate.premiumRequests, currentUsage.premiumRequests),
+    totalNanoAiu: aggregateCounter(previousAggregate.totalNanoAiu, currentUsage.totalNanoAiu),
+    totalApiDurationMs: sumOptional(previousAggregate.totalApiDurationMs, currentUsage.totalApiDurationMs),
+    totalDurationMs: sumOptional(previousAggregate.totalDurationMs, currentUsage.totalDurationMs),
+    totalLinesAdded: sumOptional(previousAggregate.totalLinesAdded, currentUsage.totalLinesAdded),
+    totalLinesRemoved: sumOptional(previousAggregate.totalLinesRemoved, currentUsage.totalLinesRemoved),
+    modelUsage: sumModelUsage(previousAggregate.modelUsage ?? [], currentUsage.modelUsage ?? [])
+  };
+  if (aggregateUsage.premiumRequests === undefined) {
+    delete aggregateUsage.premiumRequests;
+  }
+  if (aggregateUsage.totalNanoAiu === undefined) {
+    delete aggregateUsage.totalNanoAiu;
+  }
+  return aggregateUsage;
 }
 
 function hasUsageReset(currentUsage, previousUsage) {
@@ -160,6 +175,30 @@ function sumOptional(previousValue, currentValue) {
   return previous + current;
 }
 
+function subtractOptional(previousValue, currentValue) {
+  const previous = readOptionalNumber(previousValue);
+  const current = readOptionalNumber(currentValue);
+  if (previous === undefined) {
+    return undefined;
+  }
+  if (current === undefined) {
+    return previous;
+  }
+  return Math.max(round(previous - current), 0);
+}
+
+function subtractUsage(aggregateUsage, currentContribution) {
+  return {
+    premiumRequests: subtractOptional(aggregateUsage?.premiumRequests, currentContribution?.premiumRequests),
+    totalNanoAiu: subtractOptional(aggregateUsage?.totalNanoAiu, currentContribution?.totalNanoAiu),
+    totalApiDurationMs: subtractOptional(aggregateUsage?.totalApiDurationMs, currentContribution?.totalApiDurationMs),
+    totalDurationMs: subtractOptional(aggregateUsage?.totalDurationMs, currentContribution?.totalDurationMs),
+    totalLinesAdded: subtractOptional(aggregateUsage?.totalLinesAdded, currentContribution?.totalLinesAdded),
+    totalLinesRemoved: subtractOptional(aggregateUsage?.totalLinesRemoved, currentContribution?.totalLinesRemoved),
+    modelUsage: subtractModelUsage(aggregateUsage?.modelUsage ?? [], currentContribution?.modelUsage ?? [])
+  };
+}
+
 function sumModelUsage(previousModelUsage, currentModelUsage) {
   const byModel = new Map();
   for (const item of [...previousModelUsage, ...currentModelUsage]) {
@@ -185,6 +224,46 @@ function sumModelUsage(previousModelUsage, currentModelUsage) {
     target.totalNanoAiu += numberOrZero(item.totalNanoAiu);
     byModel.set(item.model, target);
   }
+  return Array.from(byModel.values()).map((item) => {
+    if (item.totalNanoAiu === 0) {
+      delete item.totalNanoAiu;
+    }
+    return item;
+  });
+}
+
+function subtractModelUsage(aggregateModelUsage, currentModelUsage) {
+  const byModel = new Map();
+  for (const item of aggregateModelUsage) {
+    if (!item.model) {
+      continue;
+    }
+    byModel.set(item.model, {
+      model: item.model,
+      requests: numberOrZero(item.requests),
+      inputTokens: numberOrZero(item.inputTokens),
+      cachedInputTokens: numberOrZero(item.cachedInputTokens),
+      cacheWriteTokens: numberOrZero(item.cacheWriteTokens),
+      outputTokens: numberOrZero(item.outputTokens),
+      reasoningTokens: numberOrZero(item.reasoningTokens),
+      totalNanoAiu: numberOrZero(item.totalNanoAiu)
+    });
+  }
+
+  for (const item of currentModelUsage) {
+    const target = byModel.get(item.model);
+    if (!target) {
+      continue;
+    }
+    target.requests = Math.max(target.requests - numberOrZero(item.requests), 0);
+    target.inputTokens = Math.max(target.inputTokens - numberOrZero(item.inputTokens), 0);
+    target.cachedInputTokens = Math.max(target.cachedInputTokens - numberOrZero(item.cachedInputTokens), 0);
+    target.cacheWriteTokens = Math.max(target.cacheWriteTokens - numberOrZero(item.cacheWriteTokens), 0);
+    target.outputTokens = Math.max(target.outputTokens - numberOrZero(item.outputTokens), 0);
+    target.reasoningTokens = Math.max(target.reasoningTokens - numberOrZero(item.reasoningTokens), 0);
+    target.totalNanoAiu = Math.max(target.totalNanoAiu - numberOrZero(item.totalNanoAiu), 0);
+  }
+
   return Array.from(byModel.values()).map((item) => {
     if (item.totalNanoAiu === 0) {
       delete item.totalNanoAiu;

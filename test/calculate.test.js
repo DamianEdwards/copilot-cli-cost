@@ -968,8 +968,12 @@ test("does not compound live RPC aggregate usage on idle refresh", () => {
 
   const merged = mergeResumedSessionUsage(current, previous);
 
-  assert.equal(merged.aggregateUsage, undefined);
-  assert.equal(merged.logicalSession, undefined);
+  assert.equal(merged.logicalSession.isResumed, true);
+  assert.equal(merged.logicalSession.resetCount, 158);
+  assert.equal(merged.logicalSession.frozenContributions.length, 158);
+  assert.equal(merged.aggregateUsage.modelUsage[0].inputTokens, 159_000);
+  assert.equal(merged.aggregateUsage.modelUsage[0].outputTokens, 15_900);
+  assert.equal(merged.aggregateUsage.premiumRequests, 37.5);
   assert.equal(merged.modelUsage[0].inputTokens, 1_000);
 });
 
