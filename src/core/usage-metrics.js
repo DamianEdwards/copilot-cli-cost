@@ -13,7 +13,9 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
       outputTokens: numberOrZero(usage.outputTokens),
-      reasoningTokens: numberOrZero(usage.reasoningTokens)
+      reasoningTokens: numberOrZero(usage.reasoningTokens),
+      totalNanoAiu: readOptionalNumber(item.totalNanoAiu),
+      tokenDetails: cloneTokenDetails(item.tokenDetails)
     };
   });
 
@@ -26,6 +28,8 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     metricsStale: false,
     currentModel: metrics.currentModel,
     premiumRequests: readOptionalNumber(metrics.totalPremiumRequestCost),
+    totalNanoAiu: readOptionalNumber(metrics.totalNanoAiu),
+    tokenDetails: cloneTokenDetails(metrics.tokenDetails),
     totalApiDurationMs: readOptionalNumber(metrics.totalApiDurationMs),
     totalUserRequests: readOptionalNumber(metrics.totalUserRequests),
     totalLinesAdded: readOptionalNumber(metrics.codeChanges?.linesAdded),
@@ -39,11 +43,22 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
 }
 
 export function mergeResumedSessionUsage(currentUsage, previousUsage) {
-  if (!previousUsage || !hasUsageReset(currentUsage, previousUsage)) {
+  if (!previousUsage) {
     return currentUsage;
   }
 
-  const previousContribution = previousUsage.aggregateUsage ?? previousUsage;
+  if (!hasUsageReset(currentUsage, previousUsage)) {
+    if (previousUsage.aggregateUsage && usageWeight(currentUsage) === 0 && usageWeight(previousUsage) === 0) {
+      return {
+        ...currentUsage,
+        logicalSession: previousUsage.logicalSession,
+        aggregateUsage: previousUsage.aggregateUsage
+      };
+    }
+    return currentUsage;
+  }
+
+  const previousAggregate = previousUsage.aggregateUsage ?? previousUsage;
   const aggregateUsage = {
     sessionId: previousUsage.logicalSession?.id ?? `session:${currentUsage.sessionId}`,
     source: "copilot-cli-resumed-session-aggregate",
@@ -55,15 +70,19 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
     sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
     workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
     transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
-    premiumRequests: aggregatePremiumRequests(previousContribution.premiumRequests, currentUsage.premiumRequests),
-    totalApiDurationMs: sumOptional(previousContribution.totalApiDurationMs, currentUsage.totalApiDurationMs),
-    totalDurationMs: sumOptional(previousContribution.totalDurationMs, currentUsage.totalDurationMs),
-    totalLinesAdded: sumOptional(previousContribution.totalLinesAdded, currentUsage.totalLinesAdded),
-    totalLinesRemoved: sumOptional(previousContribution.totalLinesRemoved, currentUsage.totalLinesRemoved),
-    modelUsage: sumModelUsage(previousContribution.modelUsage ?? [], currentUsage.modelUsage ?? [])
+    premiumRequests: aggregatePremiumRequests(previousAggregate.premiumRequests, currentUsage.premiumRequests),
+    totalNanoAiu: aggregatePremiumRequests(previousAggregate.totalNanoAiu, currentUsage.totalNanoAiu),
+    totalApiDurationMs: sumOptional(previousAggregate.totalApiDurationMs, currentUsage.totalApiDurationMs),
+    totalDurationMs: sumOptional(previousAggregate.totalDurationMs, currentUsage.totalDurationMs),
+    totalLinesAdded: sumOptional(previousAggregate.totalLinesAdded, currentUsage.totalLinesAdded),
+    totalLinesRemoved: sumOptional(previousAggregate.totalLinesRemoved, currentUsage.totalLinesRemoved),
+    modelUsage: sumModelUsage(previousAggregate.modelUsage ?? [], currentUsage.modelUsage ?? [])
   };
   if (aggregateUsage.premiumRequests === undefined) {
     delete aggregateUsage.premiumRequests;
+  }
+  if (aggregateUsage.totalNanoAiu === undefined) {
+    delete aggregateUsage.totalNanoAiu;
   }
 
   const priorResetCount = Number(previousUsage.logicalSession?.resetCount ?? 0);
@@ -80,7 +99,7 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
       resetCount: priorResetCount + 1,
       frozenContributions: [
         ...readFrozenContributions(previousUsage),
-        toFrozenContribution(previousContribution)
+        toFrozenContribution(previousUsage)
       ]
     },
     aggregateUsage
@@ -89,11 +108,20 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
 
 function hasUsageReset(currentUsage, previousUsage) {
   const currentTotal = sumTokenUsage(currentUsage);
-  const previousTotal = sumTokenUsage(previousUsage.aggregateUsage ?? previousUsage);
+  const previousTotal = sumTokenUsage(previousUsage);
   const currentPremiumRequests = numberOrZero(currentUsage.premiumRequests);
-  const previousPremiumRequests = numberOrZero((previousUsage.aggregateUsage ?? previousUsage).premiumRequests);
+  const previousPremiumRequests = numberOrZero(previousUsage.premiumRequests);
+  const currentNanoAiu = numberOrZero(currentUsage.totalNanoAiu);
+  const previousNanoAiu = numberOrZero(previousUsage.totalNanoAiu);
   return (previousTotal > 0 && currentTotal < previousTotal)
-    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests);
+    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests)
+    || (previousNanoAiu > 0 && currentNanoAiu < previousNanoAiu);
+}
+
+function usageWeight(sessionUsage) {
+  return sumTokenUsage(sessionUsage)
+    + numberOrZero(sessionUsage?.premiumRequests)
+    + numberOrZero(sessionUsage?.totalNanoAiu);
 }
 
 function sumTokenUsage(sessionUsage) {
@@ -145,7 +173,8 @@ function sumModelUsage(previousModelUsage, currentModelUsage) {
       cachedInputTokens: 0,
       cacheWriteTokens: 0,
       outputTokens: 0,
-      reasoningTokens: 0
+      reasoningTokens: 0,
+      totalNanoAiu: 0
     };
     target.requests += numberOrZero(item.requests);
     target.inputTokens += numberOrZero(item.inputTokens);
@@ -153,9 +182,15 @@ function sumModelUsage(previousModelUsage, currentModelUsage) {
     target.cacheWriteTokens += numberOrZero(item.cacheWriteTokens);
     target.outputTokens += numberOrZero(item.outputTokens);
     target.reasoningTokens += numberOrZero(item.reasoningTokens);
+    target.totalNanoAiu += numberOrZero(item.totalNanoAiu);
     byModel.set(item.model, target);
   }
-  return Array.from(byModel.values());
+  return Array.from(byModel.values()).map((item) => {
+    if (item.totalNanoAiu === 0) {
+      delete item.totalNanoAiu;
+    }
+    return item;
+  });
 }
 
 function readFrozenContributions(sessionUsage) {
@@ -170,6 +205,7 @@ function toFrozenContribution(sessionUsage) {
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
     premiumRequests: sessionUsage.premiumRequests,
+    totalNanoAiu: sessionUsage.totalNanoAiu,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,
     totalLinesAdded: sessionUsage.totalLinesAdded,
@@ -190,6 +226,20 @@ function readOptionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function cloneTokenDetails(tokenDetails) {
+  if (!tokenDetails || typeof tokenDetails !== "object" || Array.isArray(tokenDetails)) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(tokenDetails).map(([key, value]) => [
+      key,
+      value && typeof value === "object" && !Array.isArray(value)
+        ? { ...value }
+        : value
+    ])
+  );
 }
 
 function round(value) {
