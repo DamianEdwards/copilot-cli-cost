@@ -196,9 +196,10 @@ function render(data) {
     const includedAiCreditAllotment = readAiCreditAllotment(displayedUsage, usagePlan);
     const allowanceUsage = formatAiCreditAllowanceUsage(displayedUsage.allowanceUsagePercentage, includedAiCreditAllotment);
     elements.usageTotal.textContent = formatCurrency(displayedUsage.displayTotal, displayedUsage.currency.code);
+    const creditSource = formatCreditCalculation(displayedUsage);
     elements.usageSubtitle.textContent = isResumed && displayedUsage === aggregateUsageBased
-      ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`
-      : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`;
+      ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${creditSource} · ${allowanceUsage} · ${usagePlan}`
+      : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${creditSource} · ${allowanceUsage} · ${usagePlan}`;
     updateAllowanceMeter(elements.usageAllowance, displayedUsage.allowanceUsagePercentage, allowanceUsage);
   }
 
@@ -607,6 +608,7 @@ function renderBreakdown(usageBased) {
           <strong>${escapeHtml(item.model)}</strong>
           <span>${formatCurrency(item.displayTotal, currency.code)} · ${formatNumber(item.aiCredits, 1)} credits</span>
         </div>
+        <p class="model-card-meta">${escapeHtml(formatCreditCalculation(item))}${formatTokenEstimateNote(item, currency)}</p>
         <table>
           <thead>
             <tr>
@@ -627,6 +629,36 @@ function renderBreakdown(usageBased) {
       </div>
     `;
   }).join("");
+}
+
+function formatCreditCalculation(result) {
+  switch (result?.creditCalculationSource) {
+    case "copilot-cli-session-aiu":
+      return "Copilot-reported AI credits";
+    case "copilot-cli-model-aiu":
+      return "Copilot-reported model AI credits";
+    case "mixed-model-aiu-token-estimate":
+      return "mixed Copilot/model token estimate";
+    case "model-ai-credits":
+    case "session-ai-credits":
+      return "provided AI credits";
+    case "token-rate-estimate":
+    default:
+      return "token-rate estimate";
+  }
+}
+
+function formatTokenEstimateNote(result, currency) {
+  if (!result || result.creditCalculationSource === "token-rate-estimate") {
+    return "";
+  }
+
+  const estimated = Number(result.tokenEstimatedDisplayTotal);
+  if (!Number.isFinite(estimated)) {
+    return "";
+  }
+
+  return ` · token estimate ${escapeHtml(formatCurrency(estimated, currency?.code ?? "USD"))}`;
 }
 
 function renderBucket(label, tokens, rate, cost, currency) {

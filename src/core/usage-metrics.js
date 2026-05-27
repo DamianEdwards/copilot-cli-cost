@@ -13,7 +13,9 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
       outputTokens: numberOrZero(usage.outputTokens),
-      reasoningTokens: numberOrZero(usage.reasoningTokens)
+      reasoningTokens: numberOrZero(usage.reasoningTokens),
+      totalNanoAiu: readOptionalNumber(item.totalNanoAiu),
+      tokenDetails: cloneTokenDetails(item.tokenDetails)
     };
   });
 
@@ -26,6 +28,8 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     metricsStale: false,
     currentModel: metrics.currentModel,
     premiumRequests: readOptionalNumber(metrics.totalPremiumRequestCost),
+    totalNanoAiu: readOptionalNumber(metrics.totalNanoAiu),
+    tokenDetails: cloneTokenDetails(metrics.tokenDetails),
     totalApiDurationMs: readOptionalNumber(metrics.totalApiDurationMs),
     totalUserRequests: readOptionalNumber(metrics.totalUserRequests),
     totalLinesAdded: readOptionalNumber(metrics.codeChanges?.linesAdded),
@@ -39,32 +43,19 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
 }
 
 export function mergeResumedSessionUsage(currentUsage, previousUsage) {
-  if (!previousUsage || !hasUsageReset(currentUsage, previousUsage)) {
+  if (!previousUsage) {
     return currentUsage;
   }
 
-  const previousContribution = previousUsage.aggregateUsage ?? previousUsage;
-  const aggregateUsage = {
-    sessionId: previousUsage.logicalSession?.id ?? `session:${currentUsage.sessionId}`,
-    source: "copilot-cli-resumed-session-aggregate",
-    timestamp: currentUsage.timestamp,
-    metricsEventType: "usage.resumed-aggregate",
-    metricsTimestamp: currentUsage.metricsTimestamp,
-    metricsStale: false,
-    currentModel: currentUsage.currentModel ?? previousUsage.currentModel,
-    sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
-    workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
-    transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
-    premiumRequests: aggregatePremiumRequests(previousContribution.premiumRequests, currentUsage.premiumRequests),
-    totalApiDurationMs: sumOptional(previousContribution.totalApiDurationMs, currentUsage.totalApiDurationMs),
-    totalDurationMs: sumOptional(previousContribution.totalDurationMs, currentUsage.totalDurationMs),
-    totalLinesAdded: sumOptional(previousContribution.totalLinesAdded, currentUsage.totalLinesAdded),
-    totalLinesRemoved: sumOptional(previousContribution.totalLinesRemoved, currentUsage.totalLinesRemoved),
-    modelUsage: sumModelUsage(previousContribution.modelUsage ?? [], currentUsage.modelUsage ?? [])
-  };
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
+  if (!hasUsageReset(currentUsage, previousUsage)) {
+    if (previousUsage.aggregateUsage) {
+      return refreshResumedAggregate(currentUsage, previousUsage);
+    }
+    return currentUsage;
   }
+
+  const previousAggregate = previousUsage.aggregateUsage ?? previousUsage;
+  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, previousAggregate, aggregatePremiumRequests);
 
   const priorResetCount = Number(previousUsage.logicalSession?.resetCount ?? 0);
   return {
@@ -80,20 +71,72 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
       resetCount: priorResetCount + 1,
       frozenContributions: [
         ...readFrozenContributions(previousUsage),
-        toFrozenContribution(previousContribution)
+        toFrozenContribution(previousUsage)
       ]
     },
     aggregateUsage
   };
 }
 
+function refreshResumedAggregate(currentUsage, previousUsage) {
+  const priorHistory = subtractUsage(previousUsage.aggregateUsage, previousUsage);
+  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, priorHistory, sumOptional);
+  return {
+    ...currentUsage,
+    logicalSession: {
+      ...previousUsage.logicalSession,
+      currentInstanceId: currentUsage.sessionId,
+      frozenContributions: readFrozenContributions(previousUsage)
+    },
+    aggregateUsage
+  };
+}
+
+function buildAggregateUsage(currentUsage, previousUsage, previousAggregate, aggregateCounter) {
+  const aggregateUsage = {
+    sessionId: previousUsage.logicalSession?.id ?? `session:${currentUsage.sessionId}`,
+    source: "copilot-cli-resumed-session-aggregate",
+    timestamp: currentUsage.timestamp,
+    metricsEventType: "usage.resumed-aggregate",
+    metricsTimestamp: currentUsage.metricsTimestamp,
+    metricsStale: false,
+    currentModel: currentUsage.currentModel ?? previousUsage.currentModel,
+    sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
+    workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
+    transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
+    premiumRequests: aggregateCounter(previousAggregate.premiumRequests, currentUsage.premiumRequests),
+    totalNanoAiu: aggregateCounter(previousAggregate.totalNanoAiu, currentUsage.totalNanoAiu),
+    totalApiDurationMs: sumOptional(previousAggregate.totalApiDurationMs, currentUsage.totalApiDurationMs),
+    totalDurationMs: sumOptional(previousAggregate.totalDurationMs, currentUsage.totalDurationMs),
+    totalLinesAdded: sumOptional(previousAggregate.totalLinesAdded, currentUsage.totalLinesAdded),
+    totalLinesRemoved: sumOptional(previousAggregate.totalLinesRemoved, currentUsage.totalLinesRemoved),
+    modelUsage: sumModelUsage(previousAggregate.modelUsage ?? [], currentUsage.modelUsage ?? [])
+  };
+  if (aggregateUsage.premiumRequests === undefined) {
+    delete aggregateUsage.premiumRequests;
+  }
+  if (aggregateUsage.totalNanoAiu === undefined) {
+    delete aggregateUsage.totalNanoAiu;
+  }
+  return aggregateUsage;
+}
+
 function hasUsageReset(currentUsage, previousUsage) {
   const currentTotal = sumTokenUsage(currentUsage);
-  const previousTotal = sumTokenUsage(previousUsage.aggregateUsage ?? previousUsage);
+  const previousTotal = sumTokenUsage(previousUsage);
   const currentPremiumRequests = numberOrZero(currentUsage.premiumRequests);
-  const previousPremiumRequests = numberOrZero((previousUsage.aggregateUsage ?? previousUsage).premiumRequests);
+  const previousPremiumRequests = numberOrZero(previousUsage.premiumRequests);
+  const currentNanoAiu = numberOrZero(currentUsage.totalNanoAiu);
+  const previousNanoAiu = numberOrZero(previousUsage.totalNanoAiu);
   return (previousTotal > 0 && currentTotal < previousTotal)
-    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests);
+    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests)
+    || (previousNanoAiu > 0 && currentNanoAiu < previousNanoAiu);
+}
+
+function usageWeight(sessionUsage) {
+  return sumTokenUsage(sessionUsage)
+    + numberOrZero(sessionUsage?.premiumRequests)
+    + numberOrZero(sessionUsage?.totalNanoAiu);
 }
 
 function sumTokenUsage(sessionUsage) {
@@ -132,6 +175,30 @@ function sumOptional(previousValue, currentValue) {
   return previous + current;
 }
 
+function subtractOptional(previousValue, currentValue) {
+  const previous = readOptionalNumber(previousValue);
+  const current = readOptionalNumber(currentValue);
+  if (previous === undefined) {
+    return undefined;
+  }
+  if (current === undefined) {
+    return previous;
+  }
+  return Math.max(round(previous - current), 0);
+}
+
+function subtractUsage(aggregateUsage, currentContribution) {
+  return {
+    premiumRequests: subtractOptional(aggregateUsage?.premiumRequests, currentContribution?.premiumRequests),
+    totalNanoAiu: subtractOptional(aggregateUsage?.totalNanoAiu, currentContribution?.totalNanoAiu),
+    totalApiDurationMs: subtractOptional(aggregateUsage?.totalApiDurationMs, currentContribution?.totalApiDurationMs),
+    totalDurationMs: subtractOptional(aggregateUsage?.totalDurationMs, currentContribution?.totalDurationMs),
+    totalLinesAdded: subtractOptional(aggregateUsage?.totalLinesAdded, currentContribution?.totalLinesAdded),
+    totalLinesRemoved: subtractOptional(aggregateUsage?.totalLinesRemoved, currentContribution?.totalLinesRemoved),
+    modelUsage: subtractModelUsage(aggregateUsage?.modelUsage ?? [], currentContribution?.modelUsage ?? [])
+  };
+}
+
 function sumModelUsage(previousModelUsage, currentModelUsage) {
   const byModel = new Map();
   for (const item of [...previousModelUsage, ...currentModelUsage]) {
@@ -145,7 +212,8 @@ function sumModelUsage(previousModelUsage, currentModelUsage) {
       cachedInputTokens: 0,
       cacheWriteTokens: 0,
       outputTokens: 0,
-      reasoningTokens: 0
+      reasoningTokens: 0,
+      totalNanoAiu: 0
     };
     target.requests += numberOrZero(item.requests);
     target.inputTokens += numberOrZero(item.inputTokens);
@@ -153,9 +221,55 @@ function sumModelUsage(previousModelUsage, currentModelUsage) {
     target.cacheWriteTokens += numberOrZero(item.cacheWriteTokens);
     target.outputTokens += numberOrZero(item.outputTokens);
     target.reasoningTokens += numberOrZero(item.reasoningTokens);
+    target.totalNanoAiu += numberOrZero(item.totalNanoAiu);
     byModel.set(item.model, target);
   }
-  return Array.from(byModel.values());
+  return Array.from(byModel.values()).map((item) => {
+    if (item.totalNanoAiu === 0) {
+      delete item.totalNanoAiu;
+    }
+    return item;
+  });
+}
+
+function subtractModelUsage(aggregateModelUsage, currentModelUsage) {
+  const byModel = new Map();
+  for (const item of aggregateModelUsage) {
+    if (!item.model) {
+      continue;
+    }
+    byModel.set(item.model, {
+      model: item.model,
+      requests: numberOrZero(item.requests),
+      inputTokens: numberOrZero(item.inputTokens),
+      cachedInputTokens: numberOrZero(item.cachedInputTokens),
+      cacheWriteTokens: numberOrZero(item.cacheWriteTokens),
+      outputTokens: numberOrZero(item.outputTokens),
+      reasoningTokens: numberOrZero(item.reasoningTokens),
+      totalNanoAiu: numberOrZero(item.totalNanoAiu)
+    });
+  }
+
+  for (const item of currentModelUsage) {
+    const target = byModel.get(item.model);
+    if (!target) {
+      continue;
+    }
+    target.requests = Math.max(target.requests - numberOrZero(item.requests), 0);
+    target.inputTokens = Math.max(target.inputTokens - numberOrZero(item.inputTokens), 0);
+    target.cachedInputTokens = Math.max(target.cachedInputTokens - numberOrZero(item.cachedInputTokens), 0);
+    target.cacheWriteTokens = Math.max(target.cacheWriteTokens - numberOrZero(item.cacheWriteTokens), 0);
+    target.outputTokens = Math.max(target.outputTokens - numberOrZero(item.outputTokens), 0);
+    target.reasoningTokens = Math.max(target.reasoningTokens - numberOrZero(item.reasoningTokens), 0);
+    target.totalNanoAiu = Math.max(target.totalNanoAiu - numberOrZero(item.totalNanoAiu), 0);
+  }
+
+  return Array.from(byModel.values()).map((item) => {
+    if (item.totalNanoAiu === 0) {
+      delete item.totalNanoAiu;
+    }
+    return item;
+  });
 }
 
 function readFrozenContributions(sessionUsage) {
@@ -170,6 +284,7 @@ function toFrozenContribution(sessionUsage) {
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
     premiumRequests: sessionUsage.premiumRequests,
+    totalNanoAiu: sessionUsage.totalNanoAiu,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,
     totalLinesAdded: sessionUsage.totalLinesAdded,
@@ -190,6 +305,20 @@ function readOptionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function cloneTokenDetails(tokenDetails) {
+  if (!tokenDetails || typeof tokenDetails !== "object" || Array.isArray(tokenDetails)) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(tokenDetails).map(([key, value]) => [
+      key,
+      value && typeof value === "object" && !Array.isArray(value)
+        ? { ...value }
+        : value
+    ])
+  );
 }
 
 function round(value) {

@@ -36,6 +36,7 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
     ?? "current";
   const currentModel = readModelId(payload, options);
   const totals = readContextTotals(payload.context_window);
+  const totalNanoAiu = readOptionalNumber(payload.ai_used?.total_nano_aiu ?? payload.ai_used?.totalNanoAiu);
 
   return {
     sessionId,
@@ -50,6 +51,8 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
     transcriptPath: readString(payload.transcript_path),
     version: readString(payload.version),
     premiumRequests: readOptionalNumber(payload.cost?.total_premium_requests),
+    totalNanoAiu,
+    aiCreditsFormatted: readString(payload.ai_used?.formatted),
     totalApiDurationMs: readOptionalNumber(payload.cost?.total_api_duration_ms),
     totalDurationMs: readOptionalNumber(payload.cost?.total_duration_ms),
     totalLinesAdded: readOptionalNumber(payload.cost?.total_lines_added),
@@ -59,9 +62,10 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
     lastCallInputTokens: readOptionalNumber(payload.context_window?.last_call_input_tokens),
     lastCallOutputTokens: readOptionalNumber(payload.context_window?.last_call_output_tokens),
     lastContextTotals: totals,
+    lastTotalNanoAiu: totalNanoAiu,
     attribution: {
       mode: "single-snapshot",
-      note: "Statusline payload contains cumulative token totals but not historical per-model buckets. Initial totals are attributed to the active model."
+      note: "Statusline payload contains cumulative token and AI credit totals but not historical per-model buckets. Initial totals are attributed to the active model."
     },
     modelUsage: [
       {
@@ -71,7 +75,8 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
         cachedInputTokens: totals.cachedInputTokens,
         cacheWriteTokens: totals.cacheWriteTokens,
         outputTokens: totals.outputTokens,
-        reasoningTokens: totals.reasoningTokens
+        reasoningTokens: totals.reasoningTokens,
+        totalNanoAiu
       }
     ]
   };
@@ -96,7 +101,7 @@ export function mergeStatusLinePayload(payload, options = {}) {
   } else {
     const currentTotals = snapshot.lastContextTotals;
     const previousTotals = previous.lastContextTotals;
-    if (hasCounterReset(currentTotals, previousTotals)) {
+    if (hasCounterReset(currentTotals, previousTotals) || hasOptionalCounterReset(snapshot.totalNanoAiu, previous.lastTotalNanoAiu)) {
       sessionUsage = withLogicalSession(snapshot, logicalSession, {
         frozenContributions: [
           ...readFrozenContributions(previous),
@@ -106,15 +111,20 @@ export function mergeStatusLinePayload(payload, options = {}) {
       wasReset = true;
     } else {
       const delta = subtractTotals(currentTotals, previousTotals);
-      const modelUsage = addDeltaToModel(previous.modelUsage ?? [], snapshot.currentModel, delta);
+      const totalNanoAiuDelta = subtractOptionalCounter(snapshot.totalNanoAiu, previous.lastTotalNanoAiu);
+      const modelUsage = addDeltaToModel(previous.modelUsage ?? [], snapshot.currentModel, {
+        ...delta,
+        ...(totalNanoAiuDelta === undefined ? {} : { totalNanoAiu: totalNanoAiuDelta })
+      });
       const merged = {
         ...previous,
         ...snapshot,
         modelUsage,
         lastContextTotals: currentTotals,
+        lastTotalNanoAiu: snapshot.totalNanoAiu,
         attribution: {
           mode: "delta-by-active-model",
-          note: "Successive statusline cumulative-token deltas are attributed to the active model for that refresh."
+          note: "Successive statusline cumulative-token and AI credit deltas are attributed to the active model for that refresh."
         }
       };
       sessionUsage = withLogicalSession(merged, logicalSession, {
@@ -150,7 +160,7 @@ function usageWeight(sessionUsage) {
       + numberOrZero(item.cacheWriteTokens)
       + numberOrZero(item.outputTokens)
       + numberOrZero(item.reasoningTokens),
-    numberOrZero(sessionUsage?.premiumRequests)
+    numberOrZero(sessionUsage?.premiumRequests) + numberOrZero(sessionUsage?.totalNanoAiu)
   );
 }
 
@@ -247,16 +257,21 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
   let currentInstance;
   for (const instance of index.instances) {
     const usage = readLiveSession(instance.sessionId, options);
-    for (const frozen of readFrozenContributions(usage)) {
-      contributions.push(frozen);
+    if (usage.aggregateUsage && usageWeight(usage) === 0 && usageWeight(usage.aggregateUsage) > 0) {
+      contributions.push(usage.aggregateUsage);
+    } else {
+      for (const frozen of readFrozenContributions(usage)) {
+        contributions.push(frozen);
+      }
+      contributions.push(usage);
     }
-    contributions.push(usage);
     if (instance.sessionId === currentInstanceId) {
       currentInstance = usage;
     }
   }
 
   const premiumRequestsAggregation = aggregatePremiumRequests(contributions);
+  const totalNanoAiuAggregation = aggregateCumulativeCounter(contributions, "totalNanoAiu");
   const aggregateUsage = {
     sessionId: index.id,
     source: "copilot-cli-statusline-logical-session",
@@ -269,6 +284,7 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
     workspaceDirectory: currentInstance?.workspaceDirectory,
     transcriptPath: index.source === "transcript_path" ? index.key : undefined,
     premiumRequests: premiumRequestsAggregation.value,
+    totalNanoAiu: totalNanoAiuAggregation.value,
     totalApiDurationMs: sumOptional(contributions, "totalApiDurationMs"),
     totalDurationMs: sumOptional(contributions, "totalDurationMs"),
     totalLinesAdded: sumOptional(contributions, "totalLinesAdded"),
@@ -283,33 +299,41 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
       instanceCount: index.instances.length,
       resumeCount: Math.max(index.instances.length - 1, 0),
       isResumed: index.instances.length > 1,
-      premiumRequestsAggregation
+      premiumRequestsAggregation,
+      totalNanoAiuAggregation
     }
   };
 
   if (aggregateUsage.premiumRequests === undefined) {
     delete aggregateUsage.premiumRequests;
   }
+  if (aggregateUsage.totalNanoAiu === undefined) {
+    delete aggregateUsage.totalNanoAiu;
+  }
   return aggregateUsage;
 }
 
 function aggregatePremiumRequests(contributions) {
+  return aggregateCumulativeCounter(contributions, "premiumRequests");
+}
+
+function aggregateCumulativeCounter(contributions, property) {
   let value;
   let mode = "none";
   for (const contribution of contributions) {
-    const premiumRequests = readOptionalNumber(contribution.premiumRequests);
-    if (premiumRequests === undefined) {
+    const counter = readOptionalNumber(contribution[property]);
+    if (counter === undefined) {
       continue;
     }
 
     if (value === undefined) {
-      value = premiumRequests;
+      value = counter;
       mode = "single";
-    } else if (premiumRequests >= value && value > 0) {
-      value = premiumRequests;
+    } else if (counter >= value && value > 0) {
+      value = counter;
       mode = mode === "sum-reset-instances" ? "mixed" : "latest-cumulative";
     } else {
-      value = round(value + premiumRequests);
+      value = round(value + counter);
       mode = mode === "latest-cumulative" ? "mixed" : "sum-reset-instances";
     }
   }
@@ -332,7 +356,8 @@ function sumModelUsage(contributions) {
         cachedInputTokens: 0,
         cacheWriteTokens: 0,
         outputTokens: 0,
-        reasoningTokens: 0
+        reasoningTokens: 0,
+        totalNanoAiu: 0
       };
       target.requests += numberOrZero(item.requests);
       target.inputTokens += numberOrZero(item.inputTokens);
@@ -340,10 +365,16 @@ function sumModelUsage(contributions) {
       target.cacheWriteTokens += numberOrZero(item.cacheWriteTokens);
       target.outputTokens += numberOrZero(item.outputTokens);
       target.reasoningTokens += numberOrZero(item.reasoningTokens);
+      target.totalNanoAiu += numberOrZero(item.totalNanoAiu);
       byModel.set(model, target);
     }
   }
-  return Array.from(byModel.values());
+  return Array.from(byModel.values()).map((item) => {
+    if (item.totalNanoAiu === 0) {
+      delete item.totalNanoAiu;
+    }
+    return item;
+  });
 }
 
 function sumOptional(contributions, property) {
@@ -370,6 +401,7 @@ function toFrozenContribution(sessionUsage) {
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
     premiumRequests: sessionUsage.premiumRequests,
+    totalNanoAiu: sessionUsage.totalNanoAiu,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,
     totalLinesAdded: sessionUsage.totalLinesAdded,
@@ -400,12 +432,26 @@ function hasCounterReset(currentTotals, previousTotals) {
   return Object.keys(TOKEN_TOTAL_FIELDS).some((key) => currentTotals[key] < numberOrZero(previousTotals[key]));
 }
 
+function hasOptionalCounterReset(currentValue, previousValue) {
+  const current = readOptionalNumber(currentValue);
+  const previous = readOptionalNumber(previousValue);
+  return previous !== undefined && previous > 0 && current !== undefined && current < previous;
+}
+
 function subtractTotals(currentTotals, previousTotals) {
   const delta = {};
   for (const key of Object.keys(TOKEN_TOTAL_FIELDS)) {
     delta[key] = Math.max(currentTotals[key] - numberOrZero(previousTotals[key]), 0);
   }
   return delta;
+}
+
+function subtractOptionalCounter(currentValue, previousValue) {
+  const current = readOptionalNumber(currentValue);
+  if (current === undefined) {
+    return undefined;
+  }
+  return Math.max(current - numberOrZero(previousValue), 0);
 }
 
 function addDeltaToModel(modelUsage, model, delta) {
@@ -419,12 +465,16 @@ function addDeltaToModel(modelUsage, model, delta) {
       cachedInputTokens: 0,
       cacheWriteTokens: 0,
       outputTokens: 0,
-      reasoningTokens: 0
+      reasoningTokens: 0,
+      totalNanoAiu: 0
     };
     usage.push(target);
   }
 
-  for (const key of Object.keys(TOKEN_TOTAL_FIELDS)) {
+  for (const key of [...Object.keys(TOKEN_TOTAL_FIELDS), "totalNanoAiu"]) {
+    if (delta[key] === undefined) {
+      continue;
+    }
     target[key] = numberOrZero(target[key]) + delta[key];
   }
 

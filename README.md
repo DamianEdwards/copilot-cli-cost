@@ -204,6 +204,7 @@ That response includes:
 
 - Per-model request counts
 - Premium request cost
+- Copilot-reported AI credit usage (`totalNanoAiu`) when available
 - Input, cached input, cache write, output, and reasoning token buckets
 - Active model
 - Last-call input/output token counts
@@ -225,7 +226,9 @@ Windows: %USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
 macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 ```
 
-The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
+The parser reads the latest metrics event and extracts Copilot-reported AI credit usage, per-model token buckets, and total premium request units.
+
+For usage-based billing, Copilot-reported AI credits are preferred because they match the CLI's own **AI Credits** counter. Token-rate estimates are retained as a fallback when Copilot does not provide AI credit totals, and the panel labels which method was used.
 
 When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances. If premium request counters look cumulative across a resume, the aggregate uses the latest cumulative value instead of summing and double-counting it.
 
@@ -257,7 +260,8 @@ The enriched payload includes:
     "aggregate_usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     },
     "aggregate_premium_requests": {
       "billingModel": "premium-requests",
@@ -267,7 +271,8 @@ The enriched payload includes:
     "usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     },
     "premium_requests": {
       "billingModel": "premium-requests",
