@@ -2,7 +2,7 @@
   "name": "copilot-cli-cost-marketplace",
   "metadata": {
     "description": "Marketplace metadata for the Copilot CLI cost plugin.",
-    "version": "0.0.7"
+    "version": "0.0.11"
   },
   "owner": {
     "name": "Damian Edwards"
@@ -11,10 +11,9 @@
     {
       "name": "copilot-cli-cost",
       "description": "Estimate Copilot CLI session cost across premium-request and usage-based billing models.",
-      "version": "0.0.7",
+      "version": "0.0.11",
       "source": ".",
       "skills": "skills/"
     }
   ]
 }
-
