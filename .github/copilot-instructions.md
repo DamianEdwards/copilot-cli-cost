@@ -35,7 +35,7 @@ There are three presentation/integration layers:
 
 The native panel lives under `.github/extensions/copilot-cli-cost/`. `extension.mjs` bootstraps dependencies before importing `main.mjs`; `lib/copilot-webview.js` starts a local HTTP/WebSocket bridge and launches `@webviewjs/webview`; `content/` contains the browser UI.
 
-Plugin installation has two parts: `plugin.json` exposes plugin metadata and skills from `skills/`, while `scripts/install-extension-shim.mjs` installs a user-scoped SDK extension shim under `~/.copilot/extensions/copilot-cli-cost/extension.mjs` that imports the installed plugin's `.github/extensions/copilot-cli-cost/extension.mjs`.
+Plugin installation has two parts: `plugin.json` exposes plugin metadata and skills from `skills/`, while `scripts/install-extension-shim.mjs` installs a user-scoped SDK extension shim under `~/.copilot/extensions/copilot-cli-cost/extension.mjs` that imports the installed plugin's `.github/extensions/copilot-cli-cost/extension.mjs`. Do not pin this shim to a source checkout; Copilot CLI handles repo-local extension precedence. The statusline launcher remains workspace-aware because `statusLine.command` is a fixed settings command and does not use the extension resolver.
 
 ## Key conventions
 

@@ -9,7 +9,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const sourceInstaller = path.join(repoRoot, "scripts", "install-extension-shim.mjs");
 const sourceExtension = path.join(repoRoot, ".github", "extensions", "copilot-cli-cost", "extension.mjs");
 
-test("source checkout installer prefers the checkout extension", () => {
+test("source checkout installer uses the installed plugin extension", () => {
   const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-shim-home-"));
   const installedExtension = path.join(
     copilotHome,
@@ -34,9 +34,10 @@ test("source checkout installer prefers the checkout extension", () => {
 
   const shimPath = path.join(copilotHome, "extensions", "copilot-cli-cost", "extension.mjs");
   const shim = fs.readFileSync(shimPath, "utf8");
-  assert.ok(shim.includes(JSON.stringify(sourceExtension)), "shim should prefer the source checkout extension");
-  assert.ok(shim.includes(JSON.stringify(installedExtension)), "shim should retain the installed plugin as a fallback");
-  assert.ok(shim.includes("findWorkspaceExtension(process.cwd())"), "shim should defer to a project extension in the current workspace");
+  assert.ok(shim.includes(JSON.stringify(installedExtension)), "shim should point at the installed plugin extension");
+  assert.ok(!shim.includes(JSON.stringify(sourceExtension)), "source-checkout flow should not pin to the source checkout");
+  assert.ok(!shim.includes("findWorkspaceExtension"), "shim should rely on Copilot CLI for repo-local extension precedence");
+  assert.ok(!shim.includes("extensionRelativePath"), "shim should not contain workspace-extension lookup logic");
 });
 
 test("installed plugin installer keeps the installed plugin extension", () => {
@@ -66,4 +67,18 @@ test("installed plugin installer keeps the installed plugin extension", () => {
   const shim = fs.readFileSync(shimPath, "utf8");
   assert.ok(shim.includes(JSON.stringify(installedExtension)), "shim should point at the installed plugin extension");
   assert.ok(!shim.includes(JSON.stringify(sourceExtension)), "installed-plugin flow should not pin to the source checkout");
+  assert.ok(!shim.includes("findWorkspaceExtension"), "shim should rely on Copilot CLI for repo-local extension precedence");
+});
+
+test("installer requires an installed plugin copy", () => {
+  const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-shim-home-"));
+
+  const result = spawnSync(process.execPath, [sourceInstaller, "--copilot-home", copilotHome], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /copilot plugin install DamianEdwards\/copilot-cli-cost/);
+  assert.match(result.stderr, /install\.ps1\/install\.sh/);
 });
