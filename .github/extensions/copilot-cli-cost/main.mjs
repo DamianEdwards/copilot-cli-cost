@@ -1,5 +1,6 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
@@ -11,8 +12,14 @@ import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../s
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
+const extensionVersion = readExtensionVersion();
 let session;
 let currentSubscriptionPromise;
+
+function readExtensionVersion() {
+  const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+  return String(packageJson.version ?? "unknown");
+}
 
 const webview = new CopilotWebview({
   callbacks: {
@@ -88,6 +95,11 @@ async function handleCostCommand(context) {
   }
 
   try {
+    if (verb === "version") {
+      await session.log(`Copilot Cost extension version ${extensionVersion}`);
+      return;
+    }
+
     if (verb === "update") {
       await handleUpdateCommand();
       return;
@@ -139,6 +151,7 @@ function formatCostHelp() {
     "Copilot Cost usage",
     "",
     "/cost",
+    "/cost version",
     "/cost update",
     "/cost panel on|off|refresh",
     "/cost session <session-id>",
@@ -213,6 +226,7 @@ async function listPanelSessions() {
 
   return {
     currentSessionId,
+    extensionVersion,
     generatedAt: new Date().toISOString(),
     sessions: [current, ...liveSessions, ...completedSessions]
   };
@@ -282,6 +296,7 @@ async function getCostData({
     generatedAt: new Date().toISOString(),
     currentSubscription,
     exchangeRate: exchangeRate.rateInfo,
+    extensionVersion,
     repoRoot,
     requestedBillingModel: billingModel,
     sessionUsage,
