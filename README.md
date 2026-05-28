@@ -158,6 +158,7 @@ The generated statusline launcher is workspace-aware. When Copilot sends a statu
 ```text
 /cost
 /cost help
+/cost version
 /cost update
 /cost panel on
 /cost panel off
@@ -187,6 +188,7 @@ The panel shows:
 - Searchable session picker for current, cached live, and completed sessions
 - Selected session ID and data source
 - Current or assumed subscription
+- Loaded extension version
 - What-if subscription selector
 - Display currency selector
 - Per-model token bucket breakdown

@@ -3,6 +3,7 @@ const elements = {
   currency: document.getElementById("currency"),
   currencyNote: document.getElementById("currency-note"),
   currentPlan: document.getElementById("current-plan"),
+  extensionVersion: document.getElementById("extension-version"),
   plan: document.getElementById("plan"),
   pruAllowance: document.getElementById("pru-allowance"),
   pruSubtitle: document.getElementById("pru-subtitle"),
@@ -132,6 +133,7 @@ async function initialize() {
 
 async function loadSessions() {
   const data = await copilot.listSessions();
+  renderExtensionVersion(data.extensionVersion);
   sessionItems = data.sessions.map((item) => ({
     ...item,
     key: sessionKey(item),
@@ -169,6 +171,7 @@ function render(data) {
   const currentSubscription = data.currentSubscription ?? inferCurrentSubscription(data);
   const currentPlan = currentSubscription?.plan;
   const activePlan = selectedPlan ?? usageBased?.plan ?? premiumRequests?.plan ?? currentPlan;
+  renderExtensionVersion(data.extensionVersion);
   renderCurrentPlan(currentSubscription, activePlan);
   renderCurrency(data);
   if (!selectedPlan && activePlan && elements.plan.value !== activePlan) {
@@ -416,6 +419,10 @@ function renderCurrency(data) {
   const source = rateInfo?.source ?? currency?.source ?? "exchange rate";
   const date = rateInfo?.date ? ` · ${rateInfo.date}` : "";
   elements.currencyNote.textContent = `Currency: 1 USD = ${formatNumber(rate, 6)} ${currencyCode} · ${source}${date}`;
+}
+
+function renderExtensionVersion(version) {
+  elements.extensionVersion.textContent = version ? `Extension version ${version}` : "Extension version unavailable";
 }
 
 function sessionKey(item) {
