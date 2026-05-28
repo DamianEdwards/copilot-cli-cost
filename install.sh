@@ -104,10 +104,11 @@ installed_plugins="${copilot_home}/installed-plugins"
 require_command copilot
 require_command node
 
-echo "Installing Copilot CLI Cost plugin from ${plugin_source}..."
+echo "Installing or updating Copilot CLI Cost plugin..."
 if copilot plugin list 2>/dev/null | grep -qi 'copilot-cli-cost'; then
-  echo "Copilot CLI Cost plugin is already installed."
+  copilot plugin update copilot-cli-cost
 else
+  echo "Installing Copilot CLI Cost plugin from ${plugin_source}..."
   copilot plugin install "$plugin_source"
 fi
 

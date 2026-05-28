@@ -63,11 +63,12 @@ try {
   $env:COPILOT_HOME = $resolvedCopilotHome
   $installedPlugins = Join-Path $resolvedCopilotHome "installed-plugins"
 
-  Write-Host "Installing Copilot CLI Cost plugin from $PluginSource..."
+  Write-Host "Installing or updating Copilot CLI Cost plugin..."
   $pluginList = (& copilot plugin list 2>$null) -join "`n"
   if ($pluginList -match "(?i)\bcopilot-cli-cost\b") {
-    Write-Host "Copilot CLI Cost plugin is already installed."
+    Invoke-Checked "copilot" @("plugin", "update", "copilot-cli-cost")
   } else {
+    Write-Host "Installing Copilot CLI Cost plugin from $PluginSource..."
     Invoke-Checked "copilot" @("plugin", "install", $PluginSource)
   }
 

@@ -38,7 +38,7 @@ macOS/Linux (`install.sh`):
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run a local checkout instead:
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run the installer script from a checkout instead:
 
 ```powershell
 .\install.ps1
@@ -50,7 +50,7 @@ The remote scripts run in isolation and fetch their helper from the same raw-con
 
 The installer:
 
-- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
+- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not installed yet, or `copilot plugin update copilot-cli-cost` when it is already installed.
 - Downloads the installer helper from the raw-content base URL.
 - Installs the user-scoped extension shim for `/cost` and the panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
@@ -69,6 +69,8 @@ Installer options:
 Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
+
+When you run `copilot` inside this repository, Copilot CLI's extension resolver prefers the repo-local `.github/extensions/copilot-cli-cost` extension over the user-installed extension. The user-scoped shim intentionally stays pointed at the installed plugin copy for sessions outside the repository.
 
 ### Manual install
 
@@ -103,12 +105,6 @@ if [ -z "$installer" ]; then
   exit 1
 fi
 node "$installer"
-```
-
-When you're developing from a local checkout and want the user-level extension pinned to that checkout instead of the cached installed-plugin copy, run the installer from the checkout itself:
-
-```powershell
-node .\scripts\install-extension-shim.mjs
 ```
 
 Configure `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup. Use your machine's statusline launcher path:
@@ -151,7 +147,7 @@ The statusline bridge prints a compact segment:
 
 When the SDK extension can detect your current Copilot subscription, the statusline uses that cached plan for allowance percentages. `COPILOT_COST_PLAN` can still override the plan explicitly. If neither is available, the statusline falls back to `assumed pro` so the percentage is not presented as a detected plan.
 
-The generated statusline launcher is workspace-aware. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
+The generated statusline launcher is workspace-aware because statusline settings point at a fixed command and do not use the extension resolver. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
 
 ## Use
 

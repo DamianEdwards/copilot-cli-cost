@@ -1,6 +1,6 @@
 ---
 name: copilot-cost-install
-description: Enable the Copilot CLI Cost /cost command and panel by installing the user-scoped SDK extension shim from the installed plugin.
+description: Enable the Copilot CLI Cost /cost command and panel by installing the user-scoped SDK extension shim that imports the installed plugin.
 ---
 
 Use this skill when the user asks to install, enable, set up, or repair the Copilot CLI Cost `/cost` command or cost panel after installing the plugin.
@@ -8,7 +8,7 @@ Use this skill when the user asks to install, enable, set up, or repair the Copi
 Goal:
 
 - Locate the installed `copilot-cli-cost` plugin under the user's Copilot installed plugins directory.
-- Run the plugin's deterministic shim installer script.
+- Run the plugin's deterministic shim installer script. The shim imports the installed plugin copy; Copilot CLI handles repo-local extension precedence when running inside a checkout.
 - Tell the user to enable or reload the `copilot-cli-cost` user extension in `/extensions` if it is not already running.
 
 Use the command for the user's shell.
