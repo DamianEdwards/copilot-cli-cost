@@ -2,6 +2,8 @@
 set -euo pipefail
 
 plugin_source="${COPILOT_COST_PLUGIN_SOURCE:-DamianEdwards/copilot-cli-cost}"
+marketplace_name="${COPILOT_COST_MARKETPLACE_NAME:-copilot-cli-cost-marketplace}"
+plugin_name="${COPILOT_COST_PLUGIN_NAME:-copilot-cli-cost}"
 install_base_url="${COPILOT_COST_INSTALL_BASE_URL:-https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main}"
 copilot_home="${COPILOT_HOME:-${HOME}/.copilot}"
 configure_script=""
@@ -11,7 +13,7 @@ assume_yes=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./install.sh [--plugin-source <source>] [--install-base-url <url>] [--copilot-home <path>] [--skip-statusline] [--yes]
+Usage: ./install.sh [--plugin-source <source>] [--marketplace-name <name>] [--plugin-name <name>] [--install-base-url <url>] [--copilot-home <path>] [--skip-statusline] [--yes]
 
 Installs the Copilot CLI Cost plugin, user extension shim, and status line.
 USAGE
@@ -33,6 +35,22 @@ while [ "$#" -gt 0 ]; do
         exit 1
       fi
       install_base_url="$2"
+      shift 2
+      ;;
+    --marketplace-name)
+      if [ "$#" -lt 2 ]; then
+        echo "--marketplace-name requires a value." >&2
+        exit 1
+      fi
+      marketplace_name="$2"
+      shift 2
+      ;;
+    --plugin-name)
+      if [ "$#" -lt 2 ]; then
+        echo "--plugin-name requires a value." >&2
+        exit 1
+      fi
+      plugin_name="$2"
       shift 2
       ;;
     --copilot-home)
@@ -84,6 +102,64 @@ download_file() {
   fi
 }
 
+version_at_least() {
+  current_major="$1"
+  current_minor="$2"
+  current_patch="$3"
+  current_prerelease="$4"
+  minimum_major="$5"
+  minimum_minor="$6"
+  minimum_patch="$7"
+  minimum_prerelease="$8"
+
+  if [ "$current_major" -ne "$minimum_major" ]; then
+    [ "$current_major" -gt "$minimum_major" ]
+    return
+  fi
+  if [ "$current_minor" -ne "$minimum_minor" ]; then
+    [ "$current_minor" -gt "$minimum_minor" ]
+    return
+  fi
+  if [ "$current_patch" -ne "$minimum_patch" ]; then
+    [ "$current_patch" -gt "$minimum_patch" ]
+    return
+  fi
+  [ "$current_prerelease" -ge "$minimum_prerelease" ]
+}
+
+copilot_supports_marketplace_install() {
+  version_text="$(copilot --version 2>/dev/null || true)"
+  if [[ "$version_text" =~ ([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9]+))? ]]; then
+    prerelease="${BASH_REMATCH[5]:-2147483647}"
+    version_at_least "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$prerelease" 1 0 56 0
+    return
+  fi
+  return 1
+}
+
+plugin_installed() {
+  plugin_list="$1"
+  name="$2"
+  printf '%s\n' "$plugin_list" | awk -v name="$name" '$2 == name { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+marketplace_registered() {
+  marketplace_list="$1"
+  name="$2"
+  printf '%s\n' "$marketplace_list" | awk -v name="$name" '$2 == name { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+initialize_plugin_marketplace() {
+  source="$1"
+  name="$2"
+  marketplace_list="$(copilot plugin marketplace list 2>/dev/null || true)"
+  if marketplace_registered "$marketplace_list" "$name"; then
+    copilot plugin marketplace update "$name"
+  else
+    copilot plugin marketplace add "$source"
+  fi
+}
+
 get_configure_script() {
   configure_temp_dir="$(mktemp -d)"
   trap 'rm -rf "$configure_temp_dir"' EXIT
@@ -105,8 +181,33 @@ require_command copilot
 require_command node
 
 echo "Installing or updating Copilot CLI Cost plugin..."
-if copilot plugin list 2>/dev/null | grep -qi 'copilot-cli-cost'; then
-  copilot plugin update copilot-cli-cost
+plugin_list="$(copilot plugin list 2>/dev/null || true)"
+if copilot_supports_marketplace_install; then
+  marketplace_plugin="${plugin_name}@${marketplace_name}"
+  initialize_plugin_marketplace "$plugin_source" "$marketplace_name"
+  plugin_list="$(copilot plugin list 2>/dev/null || true)"
+  has_marketplace_plugin=0
+  has_direct_plugin=0
+  if plugin_installed "$plugin_list" "$marketplace_plugin"; then
+    has_marketplace_plugin=1
+  fi
+  if plugin_installed "$plugin_list" "$plugin_name"; then
+    has_direct_plugin=1
+  fi
+
+  if [ "$has_direct_plugin" -eq 1 ]; then
+    echo "Removing deprecated direct Copilot CLI Cost plugin install..."
+    copilot plugin uninstall "$plugin_name"
+  fi
+
+  if [ "$has_marketplace_plugin" -eq 1 ]; then
+    copilot plugin update "$marketplace_plugin"
+  else
+    echo "Installing Copilot CLI Cost plugin from ${marketplace_plugin}..."
+    copilot plugin install "$marketplace_plugin"
+  fi
+elif plugin_installed "$plugin_list" "$plugin_name"; then
+  copilot plugin update "$plugin_name"
 else
   echo "Installing Copilot CLI Cost plugin from ${plugin_source}..."
   copilot plugin install "$plugin_source"

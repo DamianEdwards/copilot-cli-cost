@@ -55,7 +55,7 @@ function findInstalledExtension(copilotHome) {
   if (matches.length === 0) {
     throw new Error(
       `Could not find ${extensionRelativePath} under ${installedPluginsDirectory}. ` +
-      "Run `copilot plugin install DamianEdwards/copilot-cli-cost` first, or use install.ps1/install.sh."
+      "Run install.ps1/install.sh first."
     );
   }
 

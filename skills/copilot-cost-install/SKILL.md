@@ -21,7 +21,7 @@ $installer = Get-ChildItem "$env:USERPROFILE\.copilot\installed-plugins" -Direct
   Select-Object -First 1 -ExpandProperty FullName
 
 if (-not $installer) {
-  throw "Could not find the installed copilot-cli-cost plugin. Run: copilot plugin install DamianEdwards/copilot-cli-cost"
+  throw "Could not find the installed copilot-cli-cost plugin. Run install.ps1 or install.sh first."
 }
 
 node (Join-Path $installer "scripts\install-extension-shim.mjs")
@@ -32,7 +32,7 @@ Bash/zsh:
 ```bash
 installer="$(find "$HOME/.copilot/installed-plugins" -type f -path '*/scripts/install-extension-shim.mjs' | head -n 1)"
 if [ -z "$installer" ]; then
-  echo "Could not find the installed copilot-cli-cost plugin. Run: copilot plugin install DamianEdwards/copilot-cli-cost" >&2
+  echo "Could not find the installed copilot-cli-cost plugin. Run install.ps1 or install.sh first." >&2
   exit 1
 fi
 node "$installer"

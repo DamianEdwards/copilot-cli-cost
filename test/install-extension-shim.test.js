@@ -79,6 +79,5 @@ test("installer requires an installed plugin copy", () => {
   });
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /copilot plugin install DamianEdwards\/copilot-cli-cost/);
-  assert.match(result.stderr, /install\.ps1\/install\.sh/);
+  assert.match(result.stderr, /Run install\.ps1\/install\.sh first/);
 });

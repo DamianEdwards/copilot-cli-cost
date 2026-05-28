@@ -50,7 +50,7 @@ The remote scripts run in isolation and fetch their helper from the same raw-con
 
 The installer:
 
-- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not installed yet, or `copilot plugin update copilot-cli-cost` when it is already installed.
+- On Copilot CLI 1.0.56-0 or newer, registers this repository's marketplace and installs or updates `copilot-cli-cost@copilot-cli-cost-marketplace`. Older Copilot CLI versions use the direct repository install format.
 - Downloads the installer helper from the raw-content base URL.
 - Installs the user-scoped extension shim for `/cost` and the panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
@@ -62,11 +62,14 @@ Installer options:
 
 | Option | Description |
 | --- | --- |
+| `--plugin-source <source>` | Use a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this must be a marketplace source. |
+| `--marketplace-name <name>` | Use a custom marketplace name when the marketplace metadata differs from `copilot-cli-cost-marketplace`. |
+| `--plugin-name <name>` | Use a custom plugin name when the marketplace metadata differs from `copilot-cli-cost`. |
 | `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
 
-Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this source is registered as a plugin marketplace; set `COPILOT_COST_MARKETPLACE_NAME` / `--marketplace-name` and `COPILOT_COST_PLUGIN_NAME` / `--plugin-name` if your fork changes those marketplace identifiers. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
 
@@ -77,7 +80,8 @@ When you run `copilot` inside this repository, Copilot CLI's extension resolver 
 The scripts perform these steps. To do them manually, first install the plugin:
 
 ```shell
-copilot plugin install DamianEdwards/copilot-cli-cost
+copilot plugin marketplace add DamianEdwards/copilot-cli-cost # if not already registered
+copilot plugin install copilot-cli-cost@copilot-cli-cost-marketplace
 ```
 
 Then run the extension shim installer from the installed plugin.

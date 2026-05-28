@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$PluginSource = $(if ($env:COPILOT_COST_PLUGIN_SOURCE) { $env:COPILOT_COST_PLUGIN_SOURCE } else { "DamianEdwards/copilot-cli-cost" }),
+  [string]$MarketplaceName = $(if ($env:COPILOT_COST_MARKETPLACE_NAME) { $env:COPILOT_COST_MARKETPLACE_NAME } else { "copilot-cli-cost-marketplace" }),
+  [string]$PluginName = $(if ($env:COPILOT_COST_PLUGIN_NAME) { $env:COPILOT_COST_PLUGIN_NAME } else { "copilot-cli-cost" }),
   [string]$InstallBaseUrl = $(if ($env:COPILOT_COST_INSTALL_BASE_URL) { $env:COPILOT_COST_INSTALL_BASE_URL } else { "https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main" }),
   [Alias("CopilotHome")]
   [string]$CopilotHomePath = $(if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { "" }),
@@ -51,6 +53,74 @@ function Get-ConfigureScript {
   return $remoteConfigureScript
 }
 
+function Get-CopilotVersionParts {
+  $versionText = (& copilot --version 2>$null) -join " "
+  if ($versionText -match "(\d+)\.(\d+)\.(\d+)(?:-(\d+))?") {
+    $preRelease = if ($matches[4]) { [int]$matches[4] } else { [int]::MaxValue }
+    return @([int]$matches[1], [int]$matches[2], [int]$matches[3], $preRelease)
+  }
+  return $null
+}
+
+function Test-VersionAtLeast {
+  param(
+    [int[]]$Current,
+    [int[]]$Minimum
+  )
+
+  if (-not $Current) {
+    return $false
+  }
+
+  for ($index = 0; $index -lt $Minimum.Length; $index++) {
+    if ($Current[$index] -gt $Minimum[$index]) {
+      return $true
+    }
+    if ($Current[$index] -lt $Minimum[$index]) {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Test-CopilotSupportsMarketplaceInstall {
+  return (Test-VersionAtLeast -Current (Get-CopilotVersionParts) -Minimum @(1, 0, 56, 0))
+}
+
+function Test-PluginInstalled {
+  param(
+    [string]$PluginList,
+    [string]$Name
+  )
+
+  $escapedName = [regex]::Escape($Name)
+  return $PluginList -match "(?im)^\s*\S+\s+$escapedName\s+\(v"
+}
+
+function Test-MarketplaceRegistered {
+  param(
+    [string]$MarketplaceList,
+    [string]$Name
+  )
+
+  $escapedName = [regex]::Escape($Name)
+  return $MarketplaceList -match "(?im)^\s*\S+\s+$escapedName\s+\("
+}
+
+function Initialize-PluginMarketplace {
+  param(
+    [string]$Source,
+    [string]$Name
+  )
+
+  $marketplaceList = (& copilot plugin marketplace list 2>$null) -join "`n"
+  if (Test-MarketplaceRegistered $marketplaceList $Name) {
+    Invoke-Checked "copilot" @("plugin", "marketplace", "update", $Name)
+  } else {
+    Invoke-Checked "copilot" @("plugin", "marketplace", "add", $Source)
+  }
+}
+
 $previousCopilotHome = $env:COPILOT_HOME
 try {
   Require-Command "copilot"
@@ -65,8 +135,26 @@ try {
 
   Write-Host "Installing or updating Copilot CLI Cost plugin..."
   $pluginList = (& copilot plugin list 2>$null) -join "`n"
-  if ($pluginList -match "(?i)\bcopilot-cli-cost\b") {
-    Invoke-Checked "copilot" @("plugin", "update", "copilot-cli-cost")
+  if (Test-CopilotSupportsMarketplaceInstall) {
+    $marketplacePlugin = "$PluginName@$MarketplaceName"
+    Initialize-PluginMarketplace $PluginSource $MarketplaceName
+    $pluginList = (& copilot plugin list 2>$null) -join "`n"
+    $hasMarketplacePlugin = Test-PluginInstalled $pluginList $marketplacePlugin
+    $hasDirectPlugin = Test-PluginInstalled $pluginList $PluginName
+
+    if ($hasDirectPlugin) {
+      Write-Host "Removing deprecated direct Copilot CLI Cost plugin install..."
+      Invoke-Checked "copilot" @("plugin", "uninstall", $PluginName)
+    }
+
+    if ($hasMarketplacePlugin) {
+      Invoke-Checked "copilot" @("plugin", "update", $marketplacePlugin)
+    } else {
+      Write-Host "Installing Copilot CLI Cost plugin from $marketplacePlugin..."
+      Invoke-Checked "copilot" @("plugin", "install", $marketplacePlugin)
+    }
+  } elseif (Test-PluginInstalled $pluginList $PluginName) {
+    Invoke-Checked "copilot" @("plugin", "update", $PluginName)
   } else {
     Write-Host "Installing Copilot CLI Cost plugin from $PluginSource..."
     Invoke-Checked "copilot" @("plugin", "install", $PluginSource)
