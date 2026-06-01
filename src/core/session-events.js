@@ -22,7 +22,7 @@ function readSessionUsageFromEventsCore(sessionId, options, mode) {
 
   const events = readSessionEvents(eventsPath);
   const selectedMetricsEvent = mode === "richest" ? events.richestMetricsEvent : events.latestMetricsEvent;
-  if (!selectedMetricsEvent?.data?.modelMetrics) {
+  if (!selectedMetricsEvent?.data?.modelMetrics && selectedMetricsEvent?.data?.totalNanoAiu === undefined) {
     throw new Error(`No model metrics found in Copilot session events: ${eventsPath}`);
   }
 
@@ -73,7 +73,7 @@ export function readSessionSummaryFromEvents(sessionId, options = {}) {
   }
 
   const events = readSessionEvents(eventsPath);
-  if (!events.latestMetricsEvent?.data?.modelMetrics) {
+  if (!events.latestMetricsEvent?.data?.modelMetrics && events.latestMetricsEvent?.data?.totalNanoAiu === undefined) {
     return null;
   }
 
@@ -146,7 +146,7 @@ function readSessionEvents(eventsPath) {
     if (!String(event.type ?? "").startsWith("hook.")) {
       latestNonHookEvent = event;
     }
-    if (event?.data?.modelMetrics) {
+    if (event?.data?.modelMetrics || event?.data?.totalNanoAiu !== undefined) {
       latestMetricsEvent = event;
       if (!richestMetricsEvent || eventMetricsWeight(event) > eventMetricsWeight(richestMetricsEvent)) {
         richestMetricsEvent = event;
@@ -166,7 +166,7 @@ function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {})
   const event = events.latestMetricsEvent;
   const latestEvent = events.latestEvent;
   const workspaceMetadata = readSessionWorkspaceMetadata(sessionId, options);
-  const modelUsage = Object.entries(event.data.modelMetrics).map(([model, metrics]) => {
+  const modelUsage = Object.entries(event.data.modelMetrics ?? {}).map(([model, metrics]) => {
     const usage = metrics.usage ?? {};
     const requests = metrics.requests ?? {};
 
@@ -177,7 +177,9 @@ function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {})
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
       outputTokens: numberOrZero(usage.outputTokens),
-      reasoningTokens: numberOrZero(usage.reasoningTokens)
+      reasoningTokens: numberOrZero(usage.reasoningTokens),
+      totalNanoAiu: readOptionalNumber(metrics.totalNanoAiu),
+      tokenDetails: cloneTokenDetails(metrics.tokenDetails)
     };
   });
 
@@ -196,6 +198,8 @@ function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {})
     latestEventTimestamp: latestEvent?.timestamp,
     metricsStale: latestEvent?.timestamp !== event.timestamp,
     currentModel: event.data.currentModel,
+    totalNanoAiu: readOptionalNumber(event.data.totalNanoAiu),
+    tokenDetails: cloneTokenDetails(event.data.tokenDetails),
     modelUsage
   };
 }
@@ -268,15 +272,39 @@ function numberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readOptionalNumber(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function eventMetricsWeight(event) {
-  let total = 0;
+  let total = numberOrZero(event?.data?.totalNanoAiu);
   for (const metrics of Object.values(event?.data?.modelMetrics ?? {})) {
     const usage = metrics.usage ?? {};
-    total += numberOrZero(usage.inputTokens)
+    total += numberOrZero(metrics.totalNanoAiu)
+      + numberOrZero(usage.inputTokens)
       + numberOrZero(usage.cacheReadTokens)
       + numberOrZero(usage.cacheWriteTokens)
       + numberOrZero(usage.outputTokens)
       + numberOrZero(usage.reasoningTokens);
   }
   return total;
+}
+
+function cloneTokenDetails(tokenDetails) {
+  if (!tokenDetails || typeof tokenDetails !== "object" || Array.isArray(tokenDetails)) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(tokenDetails).map(([key, value]) => [
+      key,
+      value && typeof value === "object" && !Array.isArray(value)
+        ? { ...value }
+        : value
+    ])
+  );
 }

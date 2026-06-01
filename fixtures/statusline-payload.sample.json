@@ -16,6 +16,10 @@
     "total_lines_added": 100,
     "total_lines_removed": 50
   },
+  "ai_used": {
+    "total_nano_aiu": 30586900000,
+    "formatted": "30.59"
+  },
   "context_window": {
     "total_input_tokens": 135659,
     "total_output_tokens": 1333,

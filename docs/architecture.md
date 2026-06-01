@@ -135,7 +135,7 @@ Completed sessions include per-model token buckets under `modelMetrics` in `sess
 
 Active sessions should use the deterministic SDK extension first. It calls `session.rpc.usage.getMetrics()` and normalizes the result via `src/core/usage-metrics.js`. The RPC result includes:
 
-- `totalPremiumRequestCost`
+- Copilot-reported AI credit usage (`totalNanoAiu`), when available
 - `totalUserRequests`
 - `totalApiDurationMs`
 - `currentModel`
@@ -145,7 +145,7 @@ Active sessions should use the deterministic SDK extension first. It calls `sess
 
 The extension writes the normalized RPC snapshot to the platform live-session cache so the standalone CLI and statusline ecosystem can consume the same shape.
 
-Active sessions can also use the experimental statusline payload, enabled with the platform-specific wrapper:
+Active sessions can also use the experimental statusline payload, enabled with the installer-generated wrapper under `~/.copilot/copilot-cli-cost/`. The wrapper delegates to the installed plugin copy by default, but the statusline launcher runs a checkout's `src/cli/statusline.js` when the statusline payload identifies the active workspace as this repository.
 
 Windows:
 
@@ -155,7 +155,7 @@ Windows:
   "experimental_flags": ["STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "D:\\src\\GitHub\\DamianEdwards\\copilot-cli-cost\\scripts\\statusline.cmd"
+    "command": "C:\\Users\\alex\\.copilot\\copilot-cli-cost\\statusline.cmd"
   },
   "footer": {
     "showCustom": true
@@ -173,7 +173,7 @@ macOS/Linux:
   "experimental_flags": ["STATUS_LINE"],
   "statusLine": {
     "type": "command",
-    "command": "sh /path/to/copilot-cli-cost/scripts/statusline.sh"
+    "command": "sh \"/Users/alex/.copilot/copilot-cli-cost/statusline.sh\""
   },
   "footer": {
     "showCustom": true

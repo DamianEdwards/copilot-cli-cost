@@ -184,6 +184,148 @@ test("calculates usage-based input billing from uncached input tokens", () => {
   assert.equal(result.totalUsd, 3.2);
 });
 
+test("falls back to known model prefixes for suffixed display names", () => {
+  const opus = calculateSessionCost(
+    {
+      sessionId: "suffixed-model-session",
+      modelUsage: [
+        {
+          model: "Claude Opus 4.7 (1M Context)(Internal only)",
+          requests: 2,
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+  const mini = calculateSessionCost(
+    {
+      sessionId: "longest-prefix-session",
+      modelUsage: [
+        {
+          model: "gpt-5.4-mini-internal",
+          inputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+  assert.equal(opus.modelBreakdown[0].model, "claude-opus-4.7");
+  assert.equal(opus.totalUsd, 30);
+  assert.equal(mini.modelBreakdown[0].model, "gpt-5.4-mini");
+  assert.equal(mini.totalUsd, 0.75);
+});
+
+test("prefers Copilot-reported session AI credits when available", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "direct-aiu-session",
+      totalNanoAiu: 1_500_000_000,
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.aiCredits, 1.5);
+  assert.equal(result.totalUsd, 0.015);
+  assert.equal(result.creditCalculationMethod, "copilot-aiu");
+  assert.equal(result.creditCalculationSource, "copilot-cli-session-aiu");
+  assert.equal(result.tokenEstimatedTotalUsd, 35);
+  assert.equal(result.modelBreakdown[0].creditCalculationSource, "token-rate-estimate");
+});
+
+test("prefers Copilot-reported model AI credits when session total is unavailable", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "model-aiu-session",
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          totalNanoAiu: 2_000_000_000,
+          inputTokens: 1_000_000,
+          outputTokens: 0
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.aiCredits, 2);
+  assert.equal(result.totalUsd, 0.02);
+  assert.equal(result.creditCalculationMethod, "copilot-aiu");
+  assert.equal(result.creditCalculationSource, "copilot-cli-model-aiu");
+  assert.equal(result.modelBreakdown[0].tokenEstimatedTotalUsd, 5);
+  assert.equal(result.modelBreakdown[0].creditCalculationSource, "copilot-cli-model-aiu");
+});
+
+test("treats zero Copilot-reported AI credits as authoritative", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "zero-aiu-session",
+      totalNanoAiu: 0,
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          inputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.aiCredits, 0);
+  assert.equal(result.totalUsd, 0);
+  assert.equal(result.creditCalculationSource, "copilot-cli-session-aiu");
+  assert.equal(result.tokenEstimatedTotalUsd, 5);
+});
+
+test("uses Copilot-reported AI credits for models without local token rates", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "future-model-session",
+      totalNanoAiu: 2_500_000_000,
+      modelUsage: [
+        {
+          model: "future-model",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.aiCredits, 2.5);
+  assert.equal(result.totalUsd, 0.025);
+  assert.equal(result.creditCalculationSource, "copilot-cli-session-aiu");
+  assert.equal(result.modelBreakdown[0].tokenEstimatedTotalUsd, 0);
+});
+
 test("keeps reasoning tokens informational unless explicitly billed", () => {
   const usage = {
     sessionId: "reasoning-token-session",
@@ -462,11 +604,13 @@ test("reads Copilot CLI session shutdown metrics from events jsonl", () => {
   assert.equal(usage.metricsEventType, "session.shutdown");
   assert.equal(usage.metricsStale, false);
   assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
+  assert.equal(usage.totalNanoAiu, 30586900000);
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
   assert.equal(usage.modelUsage[0].inputTokens, 135659);
   assert.equal(usage.modelUsage[0].cachedInputTokens, 91648);
   assert.equal(usage.modelUsage[0].outputTokens, 1333);
   assert.equal(usage.modelUsage[0].reasoningTokens, 335);
+  assert.equal(usage.modelUsage[0].totalNanoAiu, 30586900000);
 });
 
 test("lists live session snapshots with searchable metadata", () => {
@@ -671,17 +815,21 @@ test("normalizes Copilot CLI statusline payloads", () => {
   assert.equal(usage.source, "copilot-cli-statusline");
   assert.equal(usage.sessionId, "statusline-sample-session");
   assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
+  assert.equal(usage.totalNanoAiu, 30586900000);
+  assert.equal(usage.aiCreditsFormatted, "30.59");
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
   assert.equal(usage.modelUsage[0].inputTokens, 135659);
   assert.equal(usage.modelUsage[0].cachedInputTokens, 91648);
   assert.equal(usage.modelUsage[0].cacheWriteTokens, 12000);
   assert.equal(usage.modelUsage[0].outputTokens, 1333);
   assert.equal(usage.modelUsage[0].reasoningTokens, 335);
+  assert.equal(usage.modelUsage[0].totalNanoAiu, 30586900000);
 });
 
 test("normalizes Copilot CLI usage.getMetrics results", () => {
   const usage = usageMetricsToSessionUsage("rpc-session", {
     totalPremiumRequestCost: 7.5,
+    totalNanoAiu: 30586900000,
     totalUserRequests: 1,
     totalApiDurationMs: 1234,
     currentModel: "gpt-5.5",
@@ -695,6 +843,7 @@ test("normalizes Copilot CLI usage.getMetrics results", () => {
     modelMetrics: {
       "gpt-5.5": {
         requests: { count: 1, cost: 7.5 },
+        totalNanoAiu: 30586900000,
         usage: {
           inputTokens: 135659,
           outputTokens: 1333,
@@ -709,6 +858,7 @@ test("normalizes Copilot CLI usage.getMetrics results", () => {
   assert.equal(usage.source, "copilot-cli-rpc-usage");
   assert.equal(usage.metricsEventType, "usage.getMetrics");
   assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
+  assert.equal(usage.totalNanoAiu, 30586900000);
   assert.equal(usage.lastCallInputTokens, 42);
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
   assert.equal(usage.modelUsage[0].inputTokens, 135659);
@@ -716,6 +866,7 @@ test("normalizes Copilot CLI usage.getMetrics results", () => {
   assert.equal(usage.modelUsage[0].cacheWriteTokens, 12000);
   assert.equal(usage.modelUsage[0].outputTokens, 1333);
   assert.equal(usage.modelUsage[0].reasoningTokens, 335);
+  assert.equal(usage.modelUsage[0].totalNanoAiu, 30586900000);
 });
 
 test("preserves prior usage when live RPC counters reset after resume", () => {
@@ -748,6 +899,78 @@ test("preserves prior usage when live RPC counters reset after resume", () => {
   assert.equal(merged.modelUsage.length, 0);
 });
 
+test("does not compound live RPC aggregate usage on idle refresh", () => {
+  const previous = {
+    sessionId: "idle-rpc-session",
+    source: "copilot-cli-rpc-usage",
+    timestamp: "2026-05-13T18:00:00.000Z",
+    totalNanoAiu: 37_500_000_000,
+    modelUsage: [
+      {
+        model: "gpt-5.5",
+        inputTokens: 1_000,
+        outputTokens: 100
+      }
+    ],
+    logicalSession: {
+      id: "transcript:idle",
+      source: "transcript_path",
+      key: "D:\\TEST\\.copilot\\transcripts\\idle.jsonl",
+      currentInstanceId: "idle-rpc-session",
+      instanceCount: 1,
+      resumeCount: 1,
+      isResumed: true,
+      resetCount: 158,
+      frozenContributions: Array.from({ length: 158 }, (_, index) => ({
+        sessionId: `idle-rpc-session#reset-${index + 1}`,
+        modelUsage: [
+          {
+            model: "gpt-5.5",
+            inputTokens: 1_000,
+            outputTokens: 100
+          }
+        ]
+      }))
+    },
+    aggregateUsage: {
+      sessionId: "transcript:idle",
+      source: "copilot-cli-resumed-session-aggregate",
+      timestamp: "2026-05-13T18:00:00.000Z",
+      totalNanoAiu: 37_500_000_000,
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          inputTokens: 159_000,
+          outputTokens: 15_900
+        }
+      ]
+    }
+  };
+  const current = usageMetricsToSessionUsage("idle-rpc-session", {
+    totalNanoAiu: 37_500_000_000,
+    currentModel: "gpt-5.5",
+    modelMetrics: {
+      "gpt-5.5": {
+        requests: { count: 5 },
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 100
+        }
+      }
+    }
+  });
+
+  const merged = mergeResumedSessionUsage(current, previous);
+
+  assert.equal(merged.logicalSession.isResumed, true);
+  assert.equal(merged.logicalSession.resetCount, 158);
+  assert.equal(merged.logicalSession.frozenContributions.length, 158);
+  assert.equal(merged.aggregateUsage.modelUsage[0].inputTokens, 159_000);
+  assert.equal(merged.aggregateUsage.modelUsage[0].outputTokens, 15_900);
+  assert.equal(merged.aggregateUsage.totalNanoAiu, 37_500_000_000);
+  assert.equal(merged.modelUsage[0].inputTokens, 1_000);
+});
+
 test("merges statusline cumulative-token deltas by active model", () => {
   const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
   try {
@@ -761,16 +984,19 @@ test("merges statusline cumulative-token deltas by active model", () => {
     second.context_window.total_cache_read_tokens += 300;
     second.context_window.total_cache_write_tokens += 400;
     second.context_window.total_reasoning_tokens += 50;
+    second.ai_used.total_nano_aiu += 1_000_000_000;
 
     const { sessionUsage } = mergeStatusLinePayload(second, { storeDirectory });
     const sonnetUsage = sessionUsage.modelUsage.find((item) => item.model === "claude-sonnet-4.6");
 
+    assert.equal(sessionUsage.totalNanoAiu, 31586900000);
     assert.equal(sessionUsage.modelUsage.length, 2);
     assert.equal(sonnetUsage.inputTokens, 1000);
     assert.equal(sonnetUsage.outputTokens, 200);
     assert.equal(sonnetUsage.cachedInputTokens, 300);
     assert.equal(sonnetUsage.cacheWriteTokens, 400);
     assert.equal(sonnetUsage.reasoningTokens, 50);
+    assert.equal(sonnetUsage.totalNanoAiu, 1000000000);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -880,6 +1106,8 @@ test("statusline preserves resumed aggregate when current payload is zero", () =
     payload.context_window.total_cache_read_tokens = 0;
     payload.context_window.total_cache_write_tokens = 0;
     payload.context_window.total_reasoning_tokens = 0;
+    payload.ai_used.total_nano_aiu = 0;
+    payload.ai_used.formatted = "0";
 
     const usage = mergeStatusLinePayload(payload, { storeDirectory }).sessionUsage;
 

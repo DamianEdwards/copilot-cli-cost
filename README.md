@@ -35,7 +35,7 @@ macOS/Linux (`install.sh`):
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run a local checkout instead:
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run the installer script from a checkout instead:
 
 ```powershell
 .\install.ps1
@@ -47,7 +47,7 @@ The remote scripts run in isolation and fetch their helper from the same raw-con
 
 The installer:
 
-- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
+- On Copilot CLI 1.0.56-0 or newer, registers this repository's marketplace and installs or updates `copilot-cli-cost@copilot-cli-cost-marketplace`. Older Copilot CLI versions use the direct repository install format.
 - Downloads the installer helper from the raw-content base URL.
 - Installs the user-scoped extension shim for `/cost` and the panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
@@ -59,20 +59,26 @@ Installer options:
 
 | Option | Description |
 | --- | --- |
+| `--plugin-source <source>` | Use a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this must be a marketplace source. |
+| `--marketplace-name <name>` | Use a custom marketplace name when the marketplace metadata differs from `copilot-cli-cost-marketplace`. |
+| `--plugin-name <name>` | Use a custom plugin name when the marketplace metadata differs from `copilot-cli-cost`. |
 | `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
 
-Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this source is registered as a plugin marketplace; set `COPILOT_COST_MARKETPLACE_NAME` / `--marketplace-name` and `COPILOT_COST_PLUGIN_NAME` / `--plugin-name` if your fork changes those marketplace identifiers. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
+
+When you run `copilot` inside this repository, Copilot CLI's extension resolver prefers the repo-local `.github/extensions/copilot-cli-cost` extension over the user-installed extension. The user-scoped shim intentionally stays pointed at the installed plugin copy for sessions outside the repository.
 
 ### Manual install
 
 The scripts perform these steps. To do them manually, first install the plugin:
 
 ```shell
-copilot plugin install DamianEdwards/copilot-cli-cost
+copilot plugin marketplace add DamianEdwards/copilot-cli-cost # if not already registered
+copilot plugin install copilot-cli-cost@copilot-cli-cost-marketplace
 ```
 
 Then run the extension shim installer from the installed plugin.
@@ -100,12 +106,6 @@ if [ -z "$installer" ]; then
   exit 1
 fi
 node "$installer"
-```
-
-When you're developing from a local checkout and want the user-level extension pinned to that checkout instead of the cached installed-plugin copy, run the installer from the checkout itself:
-
-```powershell
-node .\scripts\install-extension-shim.mjs
 ```
 
 Configure `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup. Use your machine's statusline launcher path:
@@ -148,13 +148,14 @@ The statusline bridge prints a compact segment:
 
 When the SDK extension can detect your current Copilot subscription, the statusline uses that cached plan for allowance percentages. `COPILOT_COST_PLAN` can still override the plan explicitly. If neither is available, the statusline falls back to `assumed pro` so the percentage is not presented as a detected plan.
 
-The generated statusline launcher is workspace-aware. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
+The generated statusline launcher is workspace-aware because statusline settings point at a fixed command and do not use the extension resolver. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
 
 ## Use
 
 ```text
 /cost
 /cost help
+/cost version
 /cost update
 /cost panel on
 /cost panel off
@@ -182,6 +183,7 @@ The panel shows:
 - Searchable session picker for current, cached live, and completed sessions
 - Selected session ID and data source
 - Current or assumed subscription
+- Loaded extension version
 - What-if subscription selector
 - Display currency selector
 - Per-model token bucket breakdown
@@ -198,6 +200,7 @@ await session.rpc.usage.getMetrics()
 That response includes:
 
 - Per-model request counts
+- Copilot-reported AI credit usage (`totalNanoAiu`) when available
 - Input, cached input, cache write, output, and reasoning token buckets
 - Active model
 - Last-call input/output token counts
@@ -219,7 +222,9 @@ Windows: %USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
 macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 ```
 
-The parser reads the latest metrics event and extracts per-model token buckets.
+The parser reads the latest metrics event and extracts Copilot-reported AI credit usage and per-model token buckets.
+
+For usage-based billing, Copilot-reported AI credits are preferred because they match the CLI's own **AI Credits** counter. Token-rate estimates are retained as a fallback when Copilot does not provide AI credit totals, and the panel labels which method was used.
 
 When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances.
 
@@ -251,12 +256,14 @@ The enriched payload includes:
     "aggregate_usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     },
     "usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     }
   }
 }
