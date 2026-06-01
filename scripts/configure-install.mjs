@@ -266,7 +266,7 @@ async function ensureStatusLineLauncher(platform, launcherDirectory, prompt, cop
   fs.mkdirSync(launcherDirectory, { recursive: true });
 
   const launcherScriptPath = path.join(launcherDirectory, "statusline-launcher.mjs");
-  const launcherScriptContent = fs.readFileSync(path.join(scriptDirectory, "statusline-launcher.mjs"), "utf8");
+  const launcherScriptContent = readStatusLineLauncher(copilotHome);
   const launcherScriptAvailable = await writeGeneratedFile(launcherScriptPath, launcherScriptContent, prompt, false);
   if (!launcherScriptAvailable) {
     return undefined;
@@ -276,6 +276,69 @@ async function ensureStatusLineLauncher(platform, launcherDirectory, prompt, cop
   const content = platform === "windows" ? windowsLauncherContent(copilotHome) : posixLauncherContent(copilotHome);
   const available = await writeGeneratedFile(launcherPath, content, prompt, platform === "posix");
   return available ? launcherPath : undefined;
+}
+
+function readStatusLineLauncher(copilotHome) {
+  const siblingLauncher = path.join(scriptDirectory, "statusline-launcher.mjs");
+  if (fs.existsSync(siblingLauncher)) {
+    return fs.readFileSync(siblingLauncher, "utf8");
+  }
+
+  const installedLauncher = findInstalledStatusLineLauncher(copilotHome);
+  if (installedLauncher) {
+    return fs.readFileSync(installedLauncher, "utf8");
+  }
+
+  throw new Error(`Could not find statusline-launcher.mjs next to configure-install.mjs or under ${path.join(copilotHome, "installed-plugins")}.`);
+}
+
+function findInstalledStatusLineLauncher(copilotHome) {
+  const installedPluginsDirectory = path.join(copilotHome, "installed-plugins");
+  if (!fs.existsSync(installedPluginsDirectory)) {
+    return undefined;
+  }
+
+  const candidates = findFiles(installedPluginsDirectory, "statusline-launcher.mjs")
+    .filter((candidate) => path.basename(path.dirname(candidate)) === "scripts")
+    .filter((candidate) => isCopilotCostRepository(path.dirname(path.dirname(candidate))));
+  candidates.sort(compareFilesByModifiedTime);
+  return candidates[0];
+}
+
+function findFiles(directory, fileName) {
+  const results = [];
+  const stack = [directory];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(entryPath);
+      } else if (entry.isFile() && entry.name === fileName) {
+        results.push(entryPath);
+      }
+    }
+  }
+  return results;
+}
+
+function isCopilotCostRepository(repositoryRoot) {
+  const packagePath = path.join(repositoryRoot, "package.json");
+  if (!fs.existsSync(packagePath)) {
+    return false;
+  }
+
+  const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  return packageJson.name === "copilot-cli-cost";
+}
+
+function compareFilesByModifiedTime(left, right) {
+  const leftMtime = fs.statSync(left).mtimeMs;
+  const rightMtime = fs.statSync(right).mtimeMs;
+  if (leftMtime !== rightMtime) {
+    return rightMtime - leftMtime;
+  }
+  return left.localeCompare(right);
 }
 
 function windowsLauncherContent(copilotHome) {
