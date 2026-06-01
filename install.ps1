@@ -45,10 +45,13 @@ function Get-ConfigureScript {
   $script:temporaryConfigureDirectory = $temporaryDirectory
   New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
   $remoteConfigureScript = Join-Path $temporaryDirectory "configure-install.mjs"
-  $remoteUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/configure-install.mjs"
+  $remoteLauncherScript = Join-Path $temporaryDirectory "statusline-launcher.mjs"
+  $remoteConfigureUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/configure-install.mjs"
+  $remoteLauncherUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/statusline-launcher.mjs"
 
-  Write-Host "Downloading installer helper from $remoteUrl..."
-  Invoke-WebRequest -Uri $remoteUrl -OutFile $remoteConfigureScript
+  Write-Host "Downloading installer helper from $remoteConfigureUrl..."
+  Invoke-WebRequest -Uri $remoteConfigureUrl -OutFile $remoteConfigureScript
+  Invoke-WebRequest -Uri $remoteLauncherUrl -OutFile $remoteLauncherScript
 
   return $remoteConfigureScript
 }

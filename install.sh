@@ -164,10 +164,12 @@ get_configure_script() {
   configure_temp_dir="$(mktemp -d)"
   trap 'rm -rf "$configure_temp_dir"' EXIT
   configure_script="${configure_temp_dir}/configure-install.mjs"
-  remote_url="${install_base_url%/}/scripts/configure-install.mjs"
+  configure_remote_url="${install_base_url%/}/scripts/configure-install.mjs"
+  launcher_remote_url="${install_base_url%/}/scripts/statusline-launcher.mjs"
 
-  echo "Downloading installer helper from ${remote_url}..." >&2
-  download_file "$remote_url" "$configure_script"
+  echo "Downloading installer helper from ${configure_remote_url}..." >&2
+  download_file "$configure_remote_url" "$configure_script"
+  download_file "$launcher_remote_url" "${configure_temp_dir}/statusline-launcher.mjs"
 }
 
 case "$copilot_home" in

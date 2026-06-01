@@ -1562,6 +1562,16 @@ test("generated statusline launcher prefers workspace checkout before installed 
   }
 });
 
+test("remote installers download configure helper dependencies together", () => {
+  const installPs1 = fs.readFileSync(new URL("../install.ps1", import.meta.url), "utf8");
+  assert.match(installPs1, /scripts\/statusline-launcher\.mjs/);
+  assert.match(installPs1, /Invoke-WebRequest -Uri \$remoteLauncherUrl -OutFile \$remoteLauncherScript/);
+
+  const installSh = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+  assert.match(installSh, /scripts\/statusline-launcher\.mjs/);
+  assert.match(installSh, /download_file "\$launcher_remote_url" "\$\{configure_temp_dir\}\/statusline-launcher\.mjs"/);
+});
+
 function runGeneratedStatusline(launcher, payload, cwd) {
   if (process.platform === "win32") {
     return spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "call", launcher], {
