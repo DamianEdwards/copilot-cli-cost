@@ -1562,6 +1562,53 @@ test("generated statusline launcher prefers workspace checkout before installed 
   }
 });
 
+test("configure installer falls back to installed plugin launcher when remote sibling is missing", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const copilotHome = path.join(storeDirectory, "copilot-home");
+    const launcherDirectory = path.join(storeDirectory, "launcher");
+    const remoteDirectory = path.join(storeDirectory, "remote");
+    const remoteConfigureScript = path.join(remoteDirectory, "configure-install.mjs");
+    const installedPlugin = path.join(copilotHome, "installed-plugins", "copilot-cli-cost-marketplace", "copilot-cli-cost");
+    const installedScriptsDirectory = path.join(installedPlugin, "scripts");
+
+    fs.mkdirSync(remoteDirectory, { recursive: true });
+    fs.mkdirSync(installedScriptsDirectory, { recursive: true });
+    fs.copyFileSync(fileURLToPath(new URL("../scripts/configure-install.mjs", import.meta.url)), remoteConfigureScript);
+    fs.copyFileSync(
+      fileURLToPath(new URL("../scripts/statusline-launcher.mjs", import.meta.url)),
+      path.join(installedScriptsDirectory, "statusline-launcher.mjs")
+    );
+    fs.writeFileSync(path.join(installedPlugin, "package.json"), JSON.stringify({ name: "copilot-cli-cost", type: "module" }));
+
+    const configureResult = spawnSync(
+      process.execPath,
+      [
+        remoteConfigureScript,
+        "--yes",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        path.join(storeDirectory, "settings.json"),
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+
+    assert.equal(configureResult.status, 0, configureResult.stderr || configureResult.stdout);
+    assert.equal(
+      fs.readFileSync(path.join(launcherDirectory, "statusline-launcher.mjs"), "utf8"),
+      fs.readFileSync(new URL("../scripts/statusline-launcher.mjs", import.meta.url), "utf8")
+    );
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
 test("remote installers download configure helper dependencies together", () => {
   const installPs1 = fs.readFileSync(new URL("../install.ps1", import.meta.url), "utf8");
   assert.match(installPs1, /scripts\/statusline-launcher\.mjs/);
