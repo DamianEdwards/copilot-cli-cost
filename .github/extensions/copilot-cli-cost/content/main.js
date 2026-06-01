@@ -4,9 +4,6 @@ const elements = {
   currencyNote: document.getElementById("currency-note"),
   currentPlan: document.getElementById("current-plan"),
   plan: document.getElementById("plan"),
-  pruAllowance: document.getElementById("pru-allowance"),
-  pruSubtitle: document.getElementById("pru-subtitle"),
-  pruTotal: document.getElementById("pru-total"),
   raw: document.getElementById("raw"),
   refresh: document.getElementById("refresh"),
   sessionCurrent: document.getElementById("session-current"),
@@ -29,13 +26,13 @@ let selectedSession = { source: "live" };
 let sessionListOpen = false;
 let sessionItems = [];
 const planAllowances = {
-  free: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0, premiumRequests: 50 },
-  pro: { baseAiCredits: 1000, flexAiCredits: 500, totalAiCredits: 1500, premiumRequests: 300 },
-  "pro-plus": { baseAiCredits: 3900, flexAiCredits: 3100, totalAiCredits: 7000, premiumRequests: 1500 },
+  free: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0 },
+  pro: { baseAiCredits: 1000, flexAiCredits: 500, totalAiCredits: 1500 },
+  "pro-plus": { baseAiCredits: 3900, flexAiCredits: 3100, totalAiCredits: 7000 },
   max: { baseAiCredits: 10000, flexAiCredits: 10000, totalAiCredits: 20000 },
-  business: { baseAiCredits: 1900, flexAiCredits: 0, totalAiCredits: 1900, premiumRequests: 300 },
-  enterprise: { baseAiCredits: 3900, flexAiCredits: 0, totalAiCredits: 3900, premiumRequests: 1000 },
-  student: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0, premiumRequests: 300 }
+  business: { baseAiCredits: 1900, flexAiCredits: 0, promotionalAiCredits: 1100, totalAiCredits: 3000 },
+  enterprise: { baseAiCredits: 3900, flexAiCredits: 0, promotionalAiCredits: 3100, totalAiCredits: 7000 },
+  student: { baseAiCredits: 0, flexAiCredits: 0, totalAiCredits: 0 }
 };
 const planLabels = {
   free: "Copilot Free",
@@ -161,14 +158,12 @@ async function refresh({ reloadSessions = false } = {}) {
 
 function render(data) {
   const usageBased = data.usageBased;
-  const premiumRequests = data.premiumRequests;
   const aggregateUsageBased = data.aggregateUsageBased;
-  const aggregatePremiumRequests = data.aggregatePremiumRequests;
   const sessionUsage = data.sessionUsage ?? {};
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   const currentSubscription = data.currentSubscription ?? inferCurrentSubscription(data);
   const currentPlan = currentSubscription?.plan;
-  const activePlan = selectedPlan ?? usageBased?.plan ?? premiumRequests?.plan ?? currentPlan;
+  const activePlan = selectedPlan ?? usageBased?.plan ?? currentPlan;
   renderCurrentPlan(currentSubscription, activePlan);
   renderCurrency(data);
   if (!selectedPlan && activePlan && elements.plan.value !== activePlan) {
@@ -200,24 +195,6 @@ function render(data) {
       ? `logical total · this instance ${formatCurrency(usageBased.displayTotal, usageBased.currency.code)} · ${formatNumber(displayedUsage.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`
       : `${formatNumber(usageBased.aiCredits, 1)} AI credits · ${allowanceUsage} · ${usagePlan}`;
     updateAllowanceMeter(elements.usageAllowance, displayedUsage.allowanceUsagePercentage, allowanceUsage);
-  }
-
-  if (premiumRequests?.error) {
-    elements.pruTotal.textContent = "Unavailable";
-    elements.pruSubtitle.textContent = premiumRequests.error;
-    hideAllowanceMeter(elements.pruAllowance);
-  } else {
-    const pruPlan = selectedPlan ?? premiumRequests.plan;
-    const displayedPremiumRequests = isResumed && aggregatePremiumRequests && !aggregatePremiumRequests.error
-      ? aggregatePremiumRequests
-      : premiumRequests;
-    const includedPremiumRequests = displayedPremiumRequests.includedPremiumRequests ?? planAllowances[pruPlan]?.premiumRequests ?? 0;
-    const allowanceUsage = formatAllowanceUsage(displayedPremiumRequests.allowanceUsagePercentage, includedPremiumRequests);
-    elements.pruTotal.textContent = `${formatNumber(displayedPremiumRequests.totalPremiumRequests, 2)} PRU`;
-    elements.pruSubtitle.textContent = isResumed && displayedPremiumRequests === aggregatePremiumRequests
-      ? `logical total · this instance ${formatNumber(premiumRequests.totalPremiumRequests, 2)} PRU · ${formatCurrency(displayedPremiumRequests.displayOverageEquivalent, displayedPremiumRequests.currency.code)} overage-equivalent · ${allowanceUsage} · ${pruPlan}`
-      : `${formatCurrency(premiumRequests.displayOverageEquivalent, premiumRequests.currency.code)} overage-equivalent · ${allowanceUsage} · ${pruPlan}`;
-    updateAllowanceMeter(elements.pruAllowance, displayedPremiumRequests.allowanceUsagePercentage, allowanceUsage);
   }
 
   renderBreakdown(usageBased);
@@ -399,7 +376,7 @@ function syncSelectedSessionFromData(data) {
 }
 
 function renderCurrency(data) {
-  const currency = data.usageBased?.currency ?? data.premiumRequests?.currency;
+  const currency = data.usageBased?.currency;
   const currencyCode = currency?.code ?? data.exchangeRate?.quote ?? "USD";
   if (!selectedCurrency && elements.currency.value !== currencyCode) {
     elements.currency.value = currencyCode;
@@ -468,7 +445,7 @@ async function openExternalLink(event) {
 }
 
 function inferCurrentSubscription(data) {
-  const inferredPlan = data.usageBased?.plan ?? data.premiumRequests?.plan;
+  const inferredPlan = data.usageBased?.plan;
   return inferredPlan
     ? {
         inferred: true,
@@ -512,35 +489,47 @@ function readAiCreditAllotment(usageBased, usagePlan) {
     ? {
         baseAiCredits: planAllotment.baseAiCredits,
         flexAiCredits: planAllotment.flexAiCredits,
+        promotionalAiCredits: planAllotment.promotionalAiCredits ?? 0,
         totalAiCredits: planAllotment.totalAiCredits
       }
     : {
         baseAiCredits: 0,
         flexAiCredits: 0,
+        promotionalAiCredits: 0,
         totalAiCredits: usageBased.includedAiCredits ?? 0
       });
 }
 
 function formatAiCreditAllotment(allotment) {
   const total = formatNumber(allotment.totalAiCredits, 1);
-  const flex = Number(allotment.flexAiCredits ?? 0);
-  if (flex <= 0) {
+  const components = formatAiCreditAllotmentComponents(allotment);
+  if (components.length <= 0) {
     return `${total} included`;
   }
-  return `${total} included (${formatNumber(allotment.baseAiCredits, 1)} base + ${formatNumber(flex, 1)} flex)`;
+  return `${total} included (${components.join(" + ")})`;
+}
+
+function formatAiCreditAllotmentComponents(allotment) {
+  const components = [];
+  const base = Number(allotment.baseAiCredits ?? 0);
+  const flex = Number(allotment.flexAiCredits ?? 0);
+  const promotional = Number(allotment.promotionalAiCredits ?? 0);
+  if (base > 0 && (flex > 0 || promotional > 0)) {
+    components.push(`${formatNumber(base, 1)} base`);
+  }
+  if (flex > 0) {
+    components.push(`${formatNumber(flex, 1)} flex`);
+  }
+  if (promotional > 0) {
+    components.push(`${formatNumber(promotional, 1)} promotional`);
+  }
+  return components;
 }
 
 function formatAiCreditAllowanceUsage(percentage, allotment) {
   const percentageText = formatPercentage(readPercentage(percentage));
   const allotmentText = formatAiCreditAllotment(allotment);
   return percentageText ? `${percentageText} of ${allotmentText}` : allotmentText;
-}
-
-function formatAllowanceUsage(percentage, allowance) {
-  const allowanceValue = Number(allowance ?? 0);
-  const allowanceText = `${formatNumber(allowanceValue, 1)} included`;
-  const percentageText = formatPercentage(readPercentage(percentage));
-  return percentageText ? `${percentageText} of ${allowanceText}` : allowanceText;
 }
 
 function updateAllowanceMeter(element, percentage, label) {

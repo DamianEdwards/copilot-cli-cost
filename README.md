@@ -2,10 +2,7 @@
 
 Copilot CLI Cost adds estimated session-cost reporting to GitHub Copilot CLI.
 
-It estimates costs across both Copilot billing models:
-
-- Premium request units
-- Usage-based billing with GitHub AI Credits
+It estimates usage-based billing with GitHub AI Credits.
 
 The calculator stores canonical cost in USD and converts to a selected display currency with cached exchange rates from Frankfurter or an explicit exchange-rate override.
 
@@ -146,7 +143,7 @@ macOS/Linux:
 The statusline bridge prints a compact segment:
 
 ```text
-💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out
+💸 Cost ~$0.3059 (30.6 cr, 2% pro) · last 42K in/3K out
 ```
 
 When the SDK extension can detect your current Copilot subscription, the statusline uses that cached plan for allowance percentages. `COPILOT_COST_PLAN` can still override the plan explicitly. If neither is available, the statusline falls back to `assumed pro` so the percentage is not presented as a detected plan.
@@ -165,7 +162,6 @@ The generated statusline launcher is workspace-aware. When Copilot sends a statu
 /cost session <session-id>
 /cost live-session <session-id>
 /cost --plan pro|pro-plus|max|business|enterprise
-/cost --billing-model usage-based|premium-requests
 /cost --currency USD|EUR|GBP|CAD|AUD|JPY|CHF
 ```
 
@@ -182,7 +178,6 @@ The panel opens a native window:
 The panel shows:
 
 - Usage-based estimate
-- Premium-request estimate
 - Percentage of the selected plan's allowance used by the session
 - Searchable session picker for current, cached live, and completed sessions
 - Selected session ID and data source
@@ -203,7 +198,6 @@ await session.rpc.usage.getMetrics()
 That response includes:
 
 - Per-model request counts
-- Premium request cost
 - Input, cached input, cache write, output, and reasoning token buckets
 - Active model
 - Last-call input/output token counts
@@ -225,9 +219,9 @@ Windows: %USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
 macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 ```
 
-The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
+The parser reads the latest metrics event and extracts per-model token buckets.
 
-When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances. If premium request counters look cumulative across a resume, the aggregate uses the latest cumulative value instead of summing and double-counting it.
+When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances.
 
 ## Statusline passthrough
 
@@ -252,27 +246,17 @@ The enriched payload includes:
 ```jsonc
 {
   "copilot_cost": {
-    "schema_version": 1,
-    "status_line": "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out",
+    "schema_version": 2,
+    "status_line": "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · last 42K in/3K out",
     "aggregate_usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
       "aiCredits": 30.5869
     },
-    "aggregate_premium_requests": {
-      "billingModel": "premium-requests",
-      "totalPremiumRequests": 7.5,
-      "overageEquivalentUsd": 0.3
-    },
     "usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
       "aiCredits": 30.5869
-    },
-    "premium_requests": {
-      "billingModel": "premium-requests",
-      "totalPremiumRequests": 7.5,
-      "overageEquivalentUsd": 0.3
     }
   }
 }
@@ -317,7 +301,6 @@ PowerShell:
 ```powershell
 $env:COPILOT_COST_PLAN = "enterprise"
 $env:COPILOT_COST_CURRENCY = "EUR"
-$env:COPILOT_COST_PROMOTIONAL_ALLOWANCE = "true"
 copilot
 ```
 
@@ -326,7 +309,6 @@ macOS/Linux:
 ```sh
 export COPILOT_COST_PLAN=enterprise
 export COPILOT_COST_CURRENCY=EUR
-export COPILOT_COST_PROMOTIONAL_ALLOWANCE=true
 copilot
 ```
 
@@ -338,7 +320,7 @@ copilot
 | `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
 | `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates` on Windows, `~/Library/Caches/copilot-cli-cost/fx-rates` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates` on Linux. |
 | `COPILOT_COST_SUBSCRIPTION_CACHE` | Current subscription cache file used by the statusline. Defaults to `current-subscription.json` under the platform cache root. |
-| `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
+| `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Override promotional Business/Enterprise AI Credit allowances. During the June 1-September 1, 2026 transition this defaults on; set `false` to disable or `true` to force on. |
 | `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `true` to include reasoning tokens as output-priced cost. By default they are shown as informational only. |
 
 The live session cache can be overridden with `COPILOT_COST_LIVE_STORE`. By default it uses the same platform cache root as `COPILOT_COST_FX_CACHE`.
@@ -363,8 +345,6 @@ Examples:
 
 ```powershell
 npm run cost -- --sample
-npm run cost -- --sample --billing-model premium-requests --plan pro-plus
-npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
 npm run cost -- --session <session-id> --plan pro
 npm run cost -- --live --plan max
 npm run cost -- --sample --currency EUR
@@ -404,12 +384,12 @@ cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
 outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
 reasoningUsd        = 0 unless COPILOT_COST_BILL_REASONING_TOKENS=true
 aiCredits           = totalUsd / 0.01
-includedAiCredits   = baseAiCredits + current flexAiCredits
+includedAiCredits   = baseAiCredits + current flexAiCredits + current promotionalAiCredits
 ```
 
-Premium-request billing uses Copilot-reported premium request units when present. If only model request counts are available, it applies the configured model multiplier table.
+For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output.
 
-For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output. Copilot Max is usage-based only in this calculator; premium-request support remains for existing request-based plans.
+During GitHub's June 1-September 1, 2026 usage-based billing transition, existing Copilot Business and Enterprise customers receive promotional included credits. The calculator applies those promotional credits by default during that window and preserves them as a separate `promotionalAiCredits` component, for example `7,000 included (3,900 base + 3,100 promotional)` for Copilot Enterprise.
 
 Non-USD currency values are display estimates. USD remains canonical because GitHub model rates and AI Credits are documented in USD. Non-USD `/cost` and panel requests fetch USD exchange rates from [Frankfurter](https://www.frankfurter.dev/) and cache them for reuse; explicit environment or CLI exchange-rate overrides take precedence.
 

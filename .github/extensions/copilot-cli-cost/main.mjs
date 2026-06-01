@@ -47,7 +47,6 @@ session = await joinSession({
       parameters: {
         type: "object",
         properties: {
-          billingModel: { type: "string", enum: ["usage-based", "premium-requests"] },
           currency: { type: "string", description: "Display currency code, default USD." },
           plan: { type: "string", description: "Plan id, e.g. pro, pro-plus, max, business, enterprise." },
           sessionId: { type: "string", description: "Session id to read." },
@@ -57,7 +56,6 @@ session = await joinSession({
       skipPermission: true,
       handler: async (args = {}) => {
         const data = await getCostData({
-          billingModel: args.billingModel,
           currency: args.currency,
           plan: args.plan,
           sessionId: args.sessionId,
@@ -144,14 +142,12 @@ function formatCostHelp() {
     "/cost session <session-id>",
     "/cost live-session <session-id>",
     "/cost --plan pro|pro-plus|max|business|enterprise",
-    "/cost --billing-model usage-based|premium-requests",
     "/cost --currency USD"
   ].join("\n");
 }
 
 function parseCostArgs(tokens) {
   const parsed = {
-    billingModel: undefined,
     currency: undefined,
     plan: undefined,
     sessionId: undefined,
@@ -171,9 +167,6 @@ function parseCostArgs(tokens) {
       case "session":
         parsed.source = "completed";
         parsed.sessionId = readRequiredToken(tokens, ++index, token);
-        break;
-      case "--billing-model":
-        parsed.billingModel = readRequiredToken(tokens, ++index, token);
         break;
       case "--currency":
         parsed.currency = readRequiredToken(tokens, ++index, token);
@@ -238,7 +231,6 @@ function readSessionWorkspaceMetadataSafe(sessionId) {
 }
 
 async function getCostData({
-  billingModel,
   currency = process.env.COPILOT_COST_CURRENCY ?? "USD",
   plan,
   sessionId,
@@ -249,46 +241,34 @@ async function getCostData({
   const resolvedPlan = plan ?? currentSubscription.plan ?? "pro";
   const exchangeRate = await resolveExchangeRate(currency);
   const scenario = {
-    billingModel,
     currency,
     exchangeRateMetadata: exchangeRate.metadata,
     exchangeRates: exchangeRate.exchangeRates,
     billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true",
     plan: resolvedPlan,
-    promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true"
+    promotionalAllowance: readOptionalBoolean(process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE)
   };
 
   const usageBased = tryCalculate(sessionUsage, {
     ...scenario,
     billingModel: "usage-based"
   });
-  const premiumRequests = tryCalculate(sessionUsage, {
-    ...scenario,
-    billingModel: "premium-requests"
-  });
   const aggregateUsage = sessionUsage.aggregateUsage;
   const aggregateUsageBased = aggregateUsage ? tryCalculate(aggregateUsage, {
     ...scenario,
     billingModel: "usage-based"
   }) : undefined;
-  const aggregatePremiumRequests = aggregateUsage ? tryCalculate(aggregateUsage, {
-    ...scenario,
-    billingModel: "premium-requests"
-  }) : undefined;
 
   return {
-    aggregatePremiumRequests,
     aggregateUsageBased,
     generatedAt: new Date().toISOString(),
     currentSubscription,
     exchangeRate: exchangeRate.rateInfo,
     repoRoot,
-    requestedBillingModel: billingModel,
     sessionUsage,
     source,
     usageBased,
-    premiumRequests,
-    selected: billingModel === "premium-requests" ? premiumRequests : usageBased
+    selected: usageBased
   };
 }
 
@@ -459,7 +439,7 @@ function usageWeight(sessionUsage) {
       + Number(item.cacheWriteTokens ?? 0)
       + Number(item.outputTokens ?? 0)
       + Number(item.reasoningTokens ?? 0),
-    Number(sessionUsage?.premiumRequests ?? 0)
+    0
   );
 }
 
@@ -491,23 +471,13 @@ function formatCostCommandOutput(data) {
   }
 
   if (data.usageBased?.error) {
-    lines.push(`Usage-based: unavailable (${data.usageBased.error})`);
+    lines.push(`Cost: unavailable (${data.usageBased.error})`);
   } else if (data.usageBased) {
     lines.push(`Usage-based estimate: ${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
     if (isResumed && data.aggregateUsageBased && !data.aggregateUsageBased.error) {
       lines.push(`Logical session usage total: ${formatMoney(data.aggregateUsageBased.totalUsd, "USD")} (${data.aggregateUsageBased.aiCredits} AI credits)`);
     }
     lines.push(`Plan allowance: ${formatAiCreditAllotment(data.usageBased)} for ${data.usageBased.plan}`);
-  }
-
-  if (data.premiumRequests?.error) {
-    lines.push(`Premium requests: unavailable (${data.premiumRequests.error})`);
-  } else if (data.premiumRequests) {
-    lines.push(`Premium requests: ${data.premiumRequests.totalPremiumRequests} PRU (${formatMoney(data.premiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
-    if (isResumed && data.aggregatePremiumRequests && !data.aggregatePremiumRequests.error) {
-      lines.push(`Logical session premium requests: ${data.aggregatePremiumRequests.totalPremiumRequests} PRU (${formatMoney(data.aggregatePremiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
-    }
-    lines.push(`Included monthly PRUs: ${data.premiumRequests.includedPremiumRequests} for ${data.premiumRequests.plan}`);
   }
 
   lines.push("");
@@ -520,13 +490,31 @@ function formatAiCreditAllotment(usageBased) {
   const allotment = usageBased.includedAiCreditAllotment ?? {
     baseAiCredits: usageBased.includedAiCredits ?? 0,
     flexAiCredits: 0,
+    promotionalAiCredits: 0,
     totalAiCredits: usageBased.includedAiCredits ?? 0
   };
-  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
-  if (flexAiCredits <= 0) {
+  const components = formatAiCreditAllotmentComponents(allotment);
+  if (components.length <= 0) {
     return `${allotment.totalAiCredits} AI credits`;
   }
-  return `${allotment.totalAiCredits} AI credits (${allotment.baseAiCredits} base + ${flexAiCredits} flex)`;
+  return `${allotment.totalAiCredits} AI credits (${components.join(" + ")})`;
+}
+
+function formatAiCreditAllotmentComponents(allotment) {
+  const components = [];
+  const baseAiCredits = Number(allotment.baseAiCredits ?? 0);
+  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
+  const promotionalAiCredits = Number(allotment.promotionalAiCredits ?? 0);
+  if (baseAiCredits > 0 && (flexAiCredits > 0 || promotionalAiCredits > 0)) {
+    components.push(`${allotment.baseAiCredits} base`);
+  }
+  if (flexAiCredits > 0) {
+    components.push(`${flexAiCredits} flex`);
+  }
+  if (promotionalAiCredits > 0) {
+    components.push(`${promotionalAiCredits} promotional`);
+  }
+  return components;
 }
 
 async function resolveExchangeRate(currency) {
@@ -575,6 +563,13 @@ function readOptionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readOptionalBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return String(value).toLowerCase() === "true";
 }
 
 function readRequiredToken(tokens, index, flag) {

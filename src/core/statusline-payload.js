@@ -49,7 +49,6 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
     workspaceDirectory: readString(payload.workspace?.current_dir) ?? readString(payload.cwd),
     transcriptPath: readString(payload.transcript_path),
     version: readString(payload.version),
-    premiumRequests: readOptionalNumber(payload.cost?.total_premium_requests),
     totalApiDurationMs: readOptionalNumber(payload.cost?.total_api_duration_ms),
     totalDurationMs: readOptionalNumber(payload.cost?.total_duration_ms),
     totalLinesAdded: readOptionalNumber(payload.cost?.total_lines_added),
@@ -150,7 +149,7 @@ function usageWeight(sessionUsage) {
       + numberOrZero(item.cacheWriteTokens)
       + numberOrZero(item.outputTokens)
       + numberOrZero(item.reasoningTokens),
-    numberOrZero(sessionUsage?.premiumRequests)
+    0
   );
 }
 
@@ -221,7 +220,6 @@ function withResumeLogicalSession(sessionUsage, logicalSession) {
 
 function withLogicalSessionAggregate(sessionUsage, index, aggregateUsage) {
   const instanceCount = index.instances.length;
-  const premiumRequestsAggregation = aggregateUsage.logicalSession?.premiumRequestsAggregation;
   const hasAggregateHistory = usageWeight(aggregateUsage) > usageWeight(sessionUsage);
   const resumeCount = Math.max(
     Number(sessionUsage.logicalSession?.resumeCount ?? 0),
@@ -235,8 +233,7 @@ function withLogicalSessionAggregate(sessionUsage, index, aggregateUsage) {
       instances: index.instances,
       instanceCount,
       resumeCount,
-      isResumed: sessionUsage.logicalSession?.isResumed === true || instanceCount > 1 || hasAggregateHistory,
-      premiumRequestsAggregation
+      isResumed: sessionUsage.logicalSession?.isResumed === true || instanceCount > 1 || hasAggregateHistory
     },
     aggregateUsage
   };
@@ -256,7 +253,6 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
     }
   }
 
-  const premiumRequestsAggregation = aggregatePremiumRequests(contributions);
   const aggregateUsage = {
     sessionId: index.id,
     source: "copilot-cli-statusline-logical-session",
@@ -268,7 +264,6 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
     sessionName: currentInstance?.sessionName,
     workspaceDirectory: currentInstance?.workspaceDirectory,
     transcriptPath: index.source === "transcript_path" ? index.key : undefined,
-    premiumRequests: premiumRequestsAggregation.value,
     totalApiDurationMs: sumOptional(contributions, "totalApiDurationMs"),
     totalDurationMs: sumOptional(contributions, "totalDurationMs"),
     totalLinesAdded: sumOptional(contributions, "totalLinesAdded"),
@@ -282,39 +277,11 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
       instances: index.instances,
       instanceCount: index.instances.length,
       resumeCount: Math.max(index.instances.length - 1, 0),
-      isResumed: index.instances.length > 1,
-      premiumRequestsAggregation
+      isResumed: index.instances.length > 1
     }
   };
 
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
-  }
   return aggregateUsage;
-}
-
-function aggregatePremiumRequests(contributions) {
-  let value;
-  let mode = "none";
-  for (const contribution of contributions) {
-    const premiumRequests = readOptionalNumber(contribution.premiumRequests);
-    if (premiumRequests === undefined) {
-      continue;
-    }
-
-    if (value === undefined) {
-      value = premiumRequests;
-      mode = "single";
-    } else if (premiumRequests >= value && value > 0) {
-      value = premiumRequests;
-      mode = mode === "sum-reset-instances" ? "mixed" : "latest-cumulative";
-    } else {
-      value = round(value + premiumRequests);
-      mode = mode === "latest-cumulative" ? "mixed" : "sum-reset-instances";
-    }
-  }
-
-  return { value, mode };
 }
 
 function sumModelUsage(contributions) {
@@ -369,7 +336,6 @@ function toFrozenContribution(sessionUsage) {
     sessionId: `${sessionUsage.sessionId}#reset-${readFrozenContributions(sessionUsage).length + 1}`,
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
-    premiumRequests: sessionUsage.premiumRequests,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,
     totalLinesAdded: sessionUsage.totalLinesAdded,
@@ -450,8 +416,4 @@ function readOptionalNumber(value) {
 function numberOrZero(value) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function round(value) {
-  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }

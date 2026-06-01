@@ -8,7 +8,6 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     return {
       model,
       requests: numberOrZero(requests.count),
-      premiumRequests: numberOrZero(requests.cost),
       inputTokens: numberOrZero(usage.inputTokens),
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
@@ -25,7 +24,6 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     metricsTimestamp: new Date().toISOString(),
     metricsStale: false,
     currentModel: metrics.currentModel,
-    premiumRequests: readOptionalNumber(metrics.totalPremiumRequestCost),
     totalApiDurationMs: readOptionalNumber(metrics.totalApiDurationMs),
     totalUserRequests: readOptionalNumber(metrics.totalUserRequests),
     totalLinesAdded: readOptionalNumber(metrics.codeChanges?.linesAdded),
@@ -55,17 +53,12 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
     sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
     workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
     transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
-    premiumRequests: aggregatePremiumRequests(previousContribution.premiumRequests, currentUsage.premiumRequests),
     totalApiDurationMs: sumOptional(previousContribution.totalApiDurationMs, currentUsage.totalApiDurationMs),
     totalDurationMs: sumOptional(previousContribution.totalDurationMs, currentUsage.totalDurationMs),
     totalLinesAdded: sumOptional(previousContribution.totalLinesAdded, currentUsage.totalLinesAdded),
     totalLinesRemoved: sumOptional(previousContribution.totalLinesRemoved, currentUsage.totalLinesRemoved),
     modelUsage: sumModelUsage(previousContribution.modelUsage ?? [], currentUsage.modelUsage ?? [])
   };
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
-  }
-
   const priorResetCount = Number(previousUsage.logicalSession?.resetCount ?? 0);
   return {
     ...currentUsage,
@@ -90,10 +83,7 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
 function hasUsageReset(currentUsage, previousUsage) {
   const currentTotal = sumTokenUsage(currentUsage);
   const previousTotal = sumTokenUsage(previousUsage.aggregateUsage ?? previousUsage);
-  const currentPremiumRequests = numberOrZero(currentUsage.premiumRequests);
-  const previousPremiumRequests = numberOrZero((previousUsage.aggregateUsage ?? previousUsage).premiumRequests);
-  return (previousTotal > 0 && currentTotal < previousTotal)
-    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests);
+  return previousTotal > 0 && currentTotal < previousTotal;
 }
 
 function sumTokenUsage(sessionUsage) {
@@ -106,18 +96,6 @@ function sumTokenUsage(sessionUsage) {
       + numberOrZero(item.reasoningTokens),
     0
   );
-}
-
-function aggregatePremiumRequests(previousValue, currentValue) {
-  const previous = readOptionalNumber(previousValue);
-  const current = readOptionalNumber(currentValue);
-  if (previous === undefined) {
-    return current;
-  }
-  if (current === undefined) {
-    return previous;
-  }
-  return current >= previous ? current : round(previous + current);
 }
 
 function sumOptional(previousValue, currentValue) {
@@ -169,7 +147,6 @@ function toFrozenContribution(sessionUsage) {
     sessionId: sessionUsage.sessionId,
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
-    premiumRequests: sessionUsage.premiumRequests,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,
     totalLinesAdded: sessionUsage.totalLinesAdded,
@@ -190,8 +167,4 @@ function readOptionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function round(value) {
-  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }

@@ -146,7 +146,7 @@ function readSessionEvents(eventsPath) {
     if (!String(event.type ?? "").startsWith("hook.")) {
       latestNonHookEvent = event;
     }
-    if (event?.data?.modelMetrics || event?.data?.totalPremiumRequests !== undefined) {
+    if (event?.data?.modelMetrics) {
       latestMetricsEvent = event;
       if (!richestMetricsEvent || eventMetricsWeight(event) > eventMetricsWeight(richestMetricsEvent)) {
         richestMetricsEvent = event;
@@ -173,7 +173,6 @@ function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {})
     return {
       model,
       requests: numberOrZero(requests.count),
-      premiumRequests: numberOrZero(requests.cost),
       inputTokens: numberOrZero(usage.inputTokens),
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
@@ -197,7 +196,6 @@ function eventMetricsToSessionUsage(sessionId, events, sourcePath, options = {})
     latestEventTimestamp: latestEvent?.timestamp,
     metricsStale: latestEvent?.timestamp !== event.timestamp,
     currentModel: event.data.currentModel,
-    premiumRequests: readOptionalNumber(event.data.totalPremiumRequests),
     modelUsage
   };
 }
@@ -270,16 +268,8 @@ function numberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function readOptionalNumber(value) {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function eventMetricsWeight(event) {
-  let total = numberOrZero(event?.data?.totalPremiumRequests);
+  let total = 0;
   for (const metrics of Object.values(event?.data?.modelMetrics ?? {})) {
     const usage = metrics.usage ?? {};
     total += numberOrZero(usage.inputTokens)
@@ -290,4 +280,3 @@ function eventMetricsWeight(event) {
   }
   return total;
 }
-

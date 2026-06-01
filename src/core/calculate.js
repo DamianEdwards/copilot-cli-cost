@@ -1,25 +1,21 @@
 import {
   AI_CREDIT_USD,
-  PREMIUM_REQUEST_USD,
   TOKENS_PER_MILLION,
   modelAliases,
   planAiCreditAllotments,
   planAllowances,
   planIds,
-  premiumRequestMultipliers,
+  promotionalAllowancePeriod,
   usageBasedRates
 } from "./rates.js";
 import { convertUsd, resolveCurrency } from "./currency.js";
 
 export function calculateSessionCost(sessionUsage, scenario = {}) {
   const billingModel = scenario.billingModel ?? "usage-based";
-  if (billingModel === "usage-based") {
-    return calculateUsageBasedCost(sessionUsage, scenario);
+  if (billingModel !== "usage-based") {
+    throw new Error(`Unsupported billing model: ${billingModel}`);
   }
-  if (billingModel === "premium-requests") {
-    return calculatePremiumRequestCost(sessionUsage, scenario);
-  }
-  throw new Error(`Unsupported billing model: ${billingModel}`);
+  return calculateUsageBasedCost(sessionUsage, scenario);
 }
 
 export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
@@ -104,77 +100,6 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
   };
 }
 
-export function calculatePremiumRequestCost(sessionUsage, scenario = {}) {
-  const currency = resolveCurrency(scenario.currency ?? sessionUsage.currency ?? "USD", {
-    exchangeRateMetadata: scenario.exchangeRateMetadata,
-    exchangeRates: scenario.exchangeRates
-  });
-  const multiplierSet = scenario.multiplierSet ?? "current";
-  const multipliers = premiumRequestMultipliers[multiplierSet];
-  if (!multipliers) {
-    throw new Error(`Unsupported premium request multiplier set: ${multiplierSet}`);
-  }
-
-  const directPremiumRequests = readDirectPremiumRequests(sessionUsage, scenario);
-  const modelBreakdown = directPremiumRequests === undefined ? normalizeModelUsage(sessionUsage).map((usage) => {
-    const modelId = normalizeModelId(usage.model);
-    const multiplier = multipliers[modelId];
-    if (multiplier === undefined) {
-      throw new Error(`No premium request multiplier configured for model '${usage.model}' (${modelId}).`);
-    }
-
-    const requests = usage.requests || 0;
-    const premiumRequests = roundCost(requests * multiplier);
-
-    return {
-      model: modelId,
-      displayName: usage.model,
-      requests,
-      multiplier,
-      premiumRequests
-    };
-  }) : [];
-
-  const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
-  const totalPremiumRequests = directPremiumRequests ?? roundCost(sum(modelBreakdown, (item) => item.premiumRequests));
-  const includedPremiumRequests = planAllowances.premiumRequests[plan] ?? 0;
-  const allowanceUsagePercentage = calculateAllowanceUsagePercentage(totalPremiumRequests, includedPremiumRequests);
-  const remainingPremiumRequestsBeforeSession = readOptionalNumber(scenario.remainingPremiumRequests ?? sessionUsage.remainingPremiumRequestsBeforeSession);
-  const billablePremiumRequests = remainingPremiumRequestsBeforeSession === undefined
-    ? null
-    : Math.max(roundCost(totalPremiumRequests - remainingPremiumRequestsBeforeSession), 0);
-  const billableUsd = billablePremiumRequests === null ? null : roundCost(billablePremiumRequests * PREMIUM_REQUEST_USD);
-  const overageEquivalentUsd = roundCost(totalPremiumRequests * PREMIUM_REQUEST_USD);
-
-  return {
-    billingModel: "premium-requests",
-    sessionId: sessionUsage.sessionId,
-    sessionSource: sessionUsage.source,
-    metricsEventType: sessionUsage.metricsEventType,
-    metricsTimestamp: sessionUsage.metricsTimestamp,
-    latestEventType: sessionUsage.latestEventType,
-    latestEventTimestamp: sessionUsage.latestEventTimestamp,
-    metricsStale: sessionUsage.metricsStale === true,
-    plan,
-    currency,
-    multiplierSet,
-    source: directPremiumRequests === undefined ? "model-breakdown" : "direct-premium-requests",
-    totalPremiumRequests,
-    includedPremiumRequests,
-    allowanceUsagePercentage,
-    includedPremiumRequestsApplied: Math.min(totalPremiumRequests, includedPremiumRequests),
-    remainingPremiumRequestsBeforeSession,
-    billablePremiumRequests,
-    billableUsd,
-    displayBillable: billableUsd === null ? null : convertUsd(billableUsd, currency),
-    premiumRequestUnitUsd: PREMIUM_REQUEST_USD,
-    overageEquivalentUsd,
-    displayOverageEquivalent: convertUsd(overageEquivalentUsd, currency),
-    overagePremiumRequestsIfAllowanceExhausted: totalPremiumRequests,
-    modelBreakdown
-  };
-}
-
 export function normalizeModelId(model) {
   const raw = String(model ?? "").trim();
   const lower = raw.toLowerCase();
@@ -227,40 +152,33 @@ function normalizeModelUsage(sessionUsage) {
   }));
 }
 
-function readDirectPremiumRequests(sessionUsage, scenario) {
-  return readOptionalNumber(
-    scenario.premiumRequests
-      ?? sessionUsage.premiumRequests
-      ?? sessionUsage.totalPremiumRequests
-      ?? sessionUsage.currentSessionPremiumRequests
-  );
-}
-
-function readOptionalNumber(value) {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`Expected a non-negative number, received '${value}'.`);
-  }
-  return parsed;
-}
-
 function getIncludedAiCreditAllotment(plan, scenario) {
-  if (scenario.promotionalAllowance && planAllowances.promotionalAiCredits[plan] !== undefined) {
-    const promotionalAiCredits = planAllowances.promotionalAiCredits[plan];
-    return {
-      baseAiCredits: promotionalAiCredits,
-      flexAiCredits: 0,
-      totalAiCredits: promotionalAiCredits
-    };
-  }
-  return planAiCreditAllotments[plan] ?? {
+  const baseAllotment = planAiCreditAllotments[plan] ?? {
     baseAiCredits: 0,
     flexAiCredits: 0,
     totalAiCredits: 0
   };
+  const promotionalAiCredits = planAllowances.promotionalAiCredits[plan] ?? 0;
+  if (isPromotionalAllowanceActive(scenario) && promotionalAiCredits > 0) {
+    return {
+      baseAiCredits: baseAllotment.baseAiCredits,
+      flexAiCredits: baseAllotment.flexAiCredits,
+      promotionalAiCredits,
+      totalAiCredits: baseAllotment.totalAiCredits + promotionalAiCredits
+    };
+  }
+  return baseAllotment;
+}
+
+function isPromotionalAllowanceActive(scenario) {
+  if (typeof scenario.promotionalAllowance === "boolean") {
+    return scenario.promotionalAllowance;
+  }
+
+  const currentTime = Date.parse(scenario.currentDate ?? new Date().toISOString());
+  return Number.isFinite(currentTime)
+    && currentTime >= Date.parse(promotionalAllowancePeriod.startsAt)
+    && currentTime < Date.parse(promotionalAllowancePeriod.endsBefore);
 }
 
 function calculateAllowanceUsagePercentage(usage, allowance) {
@@ -295,4 +213,3 @@ function numberOrZero(value) {
 function roundCost(value) {
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }
-

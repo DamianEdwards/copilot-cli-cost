@@ -25,11 +25,7 @@ async function main() {
     const sessionUsage = readUsage(args);
     const exchangeRate = await resolveExchangeRate(args);
     const scenario = {
-      billingModel: args.billingModel,
       plan: args.plan,
-      multiplierSet: args.multiplierSet,
-      premiumRequests: args.premiumRequests,
-      remainingPremiumRequests: args.remainingPremiumRequests,
       currency: args.currency,
       promotionalAllowance: args.promotionalAllowance,
       billReasoningTokens: args.billReasoningTokens,
@@ -38,7 +34,7 @@ async function main() {
     };
     const result = calculateSessionCost(sessionUsage, scenario);
     const aggregateResult = sessionUsage.logicalSession?.isResumed && sessionUsage.aggregateUsage
-      ? calculateSessionCost(sessionUsage.aggregateUsage, { ...scenario, premiumRequests: undefined })
+      ? calculateSessionCost(sessionUsage.aggregateUsage, scenario)
       : null;
 
     if (args.json) {
@@ -109,18 +105,13 @@ function readOptionalNumber(value) {
 function parseArgs(argv) {
   const args = {
     billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true",
-    billingModel: undefined,
     currency: "USD",
-    multiplierSet: "current",
     plan: "pro"
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     switch (arg) {
-      case "--billing-model":
-        args.billingModel = readValue(argv, ++index, arg);
-        break;
       case "--currency":
         args.currency = readValue(argv, ++index, arg);
         break;
@@ -145,21 +136,14 @@ function parseArgs(argv) {
       case "--json":
         args.json = true;
         break;
-      case "--multiplier-set":
-        args.multiplierSet = readValue(argv, ++index, arg);
-        break;
       case "--plan":
         args.plan = readValue(argv, ++index, arg);
-        break;
-      case "--premium-requests":
-        args.premiumRequests = readNumber(readValue(argv, ++index, arg), arg);
-        args.billingModel ??= "premium-requests";
         break;
       case "--promotional-allowance":
         args.promotionalAllowance = true;
         break;
-      case "--remaining-premium-requests":
-        args.remainingPremiumRequests = readNumber(readValue(argv, ++index, arg), arg);
+      case "--no-promotional-allowance":
+        args.promotionalAllowance = false;
         break;
       case "--sample":
         args.sample = true;
@@ -185,7 +169,6 @@ function parseArgs(argv) {
     }
   }
 
-  args.billingModel ??= "usage-based";
   return args;
 }
 
@@ -202,13 +185,6 @@ function readUsage(args) {
     return readSessionUsageFromEvents(args.session, {
       copilotHome: args.copilotHome
     });
-  }
-
-  if (args.premiumRequests !== undefined && !args.file && !args.sample) {
-    return {
-      sessionId: args.sessionId,
-      premiumRequests: args.premiumRequests
-    };
   }
 
   if (args.statusLinePayload) {
@@ -233,56 +209,27 @@ function printHuman(result, aggregateResult, sessionUsage = {}) {
     console.log(`Logical session: ${sessionUsage.logicalSession.instanceCount} resumed instances (${sessionUsage.logicalSession.id})`);
   }
   console.log(`Plan: ${result.plan}`);
-  console.log(`Billing model: ${result.billingModel}`);
   if (result.metricsStale) {
     console.log(`Metrics status: stale as of ${result.metricsTimestamp}; latest event is ${result.latestEventType} at ${result.latestEventTimestamp}`);
   }
 
-  if (result.billingModel === "usage-based") {
-    console.log(`Cost: ${formatMoney(result.totalUsd, "USD")} (${formatMoney(result.displayTotal, result.currency.code)})`);
-    if (aggregateResult) {
-      console.log(`Logical session cost: ${formatMoney(aggregateResult.totalUsd, "USD")} (${formatMoney(aggregateResult.displayTotal, aggregateResult.currency.code)})`);
-    }
-    console.log(`AI credits: ${result.aiCredits}`);
-    console.log(`Included monthly credits for plan: ${formatAiCreditAllotment(result)}`);
-    console.log(`Currency rate: USD -> ${result.currency.code} ${result.currency.exchangeRate} (${result.currency.source})`);
-    console.log("");
-    console.log("Model breakdown:");
-    for (const item of result.modelBreakdown) {
-      const uncachedInputTokens = item.uncachedInputTokens ?? Math.max(Number(item.inputTokens ?? 0) - Number(item.cachedInputTokens ?? 0), 0);
-      console.log(`- ${item.model}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${uncachedInputTokens} uncached input, ${item.cachedInputTokens} cached input, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
-    }
-    return;
-  }
-
-  console.log(`Premium requests: ${result.totalPremiumRequests}`);
+  console.log(`Cost: ${formatMoney(result.totalUsd, "USD")} (${formatMoney(result.displayTotal, result.currency.code)})`);
   if (aggregateResult) {
-    console.log(`Logical session premium requests: ${aggregateResult.totalPremiumRequests}`);
+    console.log(`Logical session cost: ${formatMoney(aggregateResult.totalUsd, "USD")} (${formatMoney(aggregateResult.displayTotal, aggregateResult.currency.code)})`);
   }
-  console.log(`Included monthly premium requests for plan: ${result.includedPremiumRequests}`);
-  console.log(`Overage-equivalent value: ${formatMoney(result.overageEquivalentUsd, "USD")} (${formatMoney(result.displayOverageEquivalent, result.currency.code)})`);
-  console.log(`Premium request overage rate: ${formatMoney(result.premiumRequestUnitUsd, "USD")} per PRU`);
+  console.log(`AI credits: ${result.aiCredits}`);
+  console.log(`Included monthly credits for plan: ${formatAiCreditAllotment(result)}`);
   console.log(`Currency rate: USD -> ${result.currency.code} ${result.currency.exchangeRate} (${result.currency.source})`);
-  if (result.remainingPremiumRequestsBeforeSession !== undefined) {
-    console.log(`Remaining premium requests before session: ${result.remainingPremiumRequestsBeforeSession}`);
-    console.log(`Billable premium requests from this session: ${result.billablePremiumRequests}`);
-    console.log(`Estimated incremental charge: ${formatMoney(result.billableUsd, "USD")} (${formatMoney(result.displayBillable, result.currency.code)})`);
-  } else {
-    console.log("Estimated incremental charge: unknown without remaining monthly allowance before this session");
-  }
-  console.log(`Multiplier set: ${result.multiplierSet}`);
-  if (result.modelBreakdown.length > 0) {
-    console.log("");
-    console.log("Model breakdown:");
-    for (const item of result.modelBreakdown) {
-      console.log(`- ${item.model}: ${item.requests} requests x ${item.multiplier} = ${item.premiumRequests} PRUs`);
-    }
+  console.log("");
+  console.log("Model breakdown:");
+  for (const item of result.modelBreakdown) {
+    const uncachedInputTokens = item.uncachedInputTokens ?? Math.max(Number(item.inputTokens ?? 0) - Number(item.cachedInputTokens ?? 0), 0);
+    console.log(`- ${item.model}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${uncachedInputTokens} uncached input, ${item.cachedInputTokens} cached input, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
   }
 }
 
 function printHelp() {
   console.log(`Usage: copilot-cost --file <usage.json> [options]
-       copilot-cost --premium-requests <count> [options]
        copilot-cost --live [options]
 
 Options:
@@ -292,17 +239,14 @@ Options:
   --live-session <id>              Read a specific live statusline snapshot
   --statusline-payload <file>      Read a raw Copilot CLI statusline JSON payload
   --copilot-home <path>            Override Copilot home when using --session
-  --billing-model <model>          usage-based | premium-requests
   --plan <plan>                    free | pro | pro-plus | max | business | enterprise | student
-  --premium-requests <count>       Calculate from an already-multiplied PRU count
-  --remaining-premium-requests <n> Monthly PRUs remaining before this session
   --session-id <id>                Session id to include in output
   --bill-reasoning-tokens          Include reasoning tokens as output-priced cost
   --no-bill-reasoning-tokens       Keep reasoning tokens informational only
   --currency <code>                Display currency, default USD
   --exchange-rate <rate>           USD-to-currency exchange rate override for non-USD display
-  --multiplier-set <set>           current | annual-after-2026-06-01
-  --promotional-allowance          Use Business/Enterprise promotional UBB allowance
+  --promotional-allowance          Force Business/Enterprise promotional UBB allowances on
+  --no-promotional-allowance       Force Business/Enterprise promotional UBB allowances off
   --json                           Print machine-readable JSON
   --help                           Show help
 `);
@@ -312,13 +256,31 @@ function formatAiCreditAllotment(result) {
   const allotment = result.includedAiCreditAllotment ?? {
     baseAiCredits: result.includedAiCredits ?? 0,
     flexAiCredits: 0,
+    promotionalAiCredits: 0,
     totalAiCredits: result.includedAiCredits ?? 0
   };
-  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
-  if (flexAiCredits <= 0) {
+  const components = formatAiCreditAllotmentComponents(allotment);
+  if (components.length <= 0) {
     return `${allotment.totalAiCredits}`;
   }
-  return `${allotment.totalAiCredits} (${allotment.baseAiCredits} base + ${flexAiCredits} flex)`;
+  return `${allotment.totalAiCredits} (${components.join(" + ")})`;
+}
+
+function formatAiCreditAllotmentComponents(allotment) {
+  const components = [];
+  const baseAiCredits = Number(allotment.baseAiCredits ?? 0);
+  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
+  const promotionalAiCredits = Number(allotment.promotionalAiCredits ?? 0);
+  if (baseAiCredits > 0 && (flexAiCredits > 0 || promotionalAiCredits > 0)) {
+    components.push(`${allotment.baseAiCredits} base`);
+  }
+  if (flexAiCredits > 0) {
+    components.push(`${flexAiCredits} flex`);
+  }
+  if (promotionalAiCredits > 0) {
+    components.push(`${promotionalAiCredits} promotional`);
+  }
+  return components;
 }
 
 function readValue(argv, index, flag) {
@@ -328,12 +290,3 @@ function readValue(argv, index, flag) {
   }
   return value;
 }
-
-function readNumber(value, flag) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${flag} requires a non-negative number.`);
-  }
-  return parsed;
-}
-
