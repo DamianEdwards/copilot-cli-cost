@@ -8,7 +8,6 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     return {
       model,
       requests: numberOrZero(requests.count),
-      premiumRequests: numberOrZero(requests.cost),
       inputTokens: numberOrZero(usage.inputTokens),
       cachedInputTokens: numberOrZero(usage.cacheReadTokens),
       cacheWriteTokens: numberOrZero(usage.cacheWriteTokens),
@@ -27,7 +26,6 @@ export function usageMetricsToSessionUsage(sessionId, metrics, options = {}) {
     metricsTimestamp: new Date().toISOString(),
     metricsStale: false,
     currentModel: metrics.currentModel,
-    premiumRequests: readOptionalNumber(metrics.totalPremiumRequestCost),
     totalNanoAiu: readOptionalNumber(metrics.totalNanoAiu),
     tokenDetails: cloneTokenDetails(metrics.tokenDetails),
     totalApiDurationMs: readOptionalNumber(metrics.totalApiDurationMs),
@@ -55,7 +53,7 @@ export function mergeResumedSessionUsage(currentUsage, previousUsage) {
   }
 
   const previousAggregate = previousUsage.aggregateUsage ?? previousUsage;
-  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, previousAggregate, aggregatePremiumRequests);
+  const aggregateUsage = buildAggregateUsage(currentUsage, previousUsage, previousAggregate, sumOptional);
 
   const priorResetCount = Number(previousUsage.logicalSession?.resetCount ?? 0);
   return {
@@ -104,7 +102,6 @@ function buildAggregateUsage(currentUsage, previousUsage, previousAggregate, agg
     sessionName: currentUsage.sessionName ?? previousUsage.sessionName,
     workspaceDirectory: currentUsage.workspaceDirectory ?? previousUsage.workspaceDirectory,
     transcriptPath: currentUsage.transcriptPath ?? previousUsage.transcriptPath,
-    premiumRequests: aggregateCounter(previousAggregate.premiumRequests, currentUsage.premiumRequests),
     totalNanoAiu: aggregateCounter(previousAggregate.totalNanoAiu, currentUsage.totalNanoAiu),
     totalApiDurationMs: sumOptional(previousAggregate.totalApiDurationMs, currentUsage.totalApiDurationMs),
     totalDurationMs: sumOptional(previousAggregate.totalDurationMs, currentUsage.totalDurationMs),
@@ -112,9 +109,6 @@ function buildAggregateUsage(currentUsage, previousUsage, previousAggregate, agg
     totalLinesRemoved: sumOptional(previousAggregate.totalLinesRemoved, currentUsage.totalLinesRemoved),
     modelUsage: sumModelUsage(previousAggregate.modelUsage ?? [], currentUsage.modelUsage ?? [])
   };
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
-  }
   if (aggregateUsage.totalNanoAiu === undefined) {
     delete aggregateUsage.totalNanoAiu;
   }
@@ -124,18 +118,14 @@ function buildAggregateUsage(currentUsage, previousUsage, previousAggregate, agg
 function hasUsageReset(currentUsage, previousUsage) {
   const currentTotal = sumTokenUsage(currentUsage);
   const previousTotal = sumTokenUsage(previousUsage);
-  const currentPremiumRequests = numberOrZero(currentUsage.premiumRequests);
-  const previousPremiumRequests = numberOrZero(previousUsage.premiumRequests);
   const currentNanoAiu = numberOrZero(currentUsage.totalNanoAiu);
   const previousNanoAiu = numberOrZero(previousUsage.totalNanoAiu);
   return (previousTotal > 0 && currentTotal < previousTotal)
-    || (previousPremiumRequests > 0 && currentPremiumRequests < previousPremiumRequests)
     || (previousNanoAiu > 0 && currentNanoAiu < previousNanoAiu);
 }
 
 function usageWeight(sessionUsage) {
   return sumTokenUsage(sessionUsage)
-    + numberOrZero(sessionUsage?.premiumRequests)
     + numberOrZero(sessionUsage?.totalNanoAiu);
 }
 
@@ -149,18 +139,6 @@ function sumTokenUsage(sessionUsage) {
       + numberOrZero(item.reasoningTokens),
     0
   );
-}
-
-function aggregatePremiumRequests(previousValue, currentValue) {
-  const previous = readOptionalNumber(previousValue);
-  const current = readOptionalNumber(currentValue);
-  if (previous === undefined) {
-    return current;
-  }
-  if (current === undefined) {
-    return previous;
-  }
-  return current >= previous ? current : round(previous + current);
 }
 
 function sumOptional(previousValue, currentValue) {
@@ -189,7 +167,6 @@ function subtractOptional(previousValue, currentValue) {
 
 function subtractUsage(aggregateUsage, currentContribution) {
   return {
-    premiumRequests: subtractOptional(aggregateUsage?.premiumRequests, currentContribution?.premiumRequests),
     totalNanoAiu: subtractOptional(aggregateUsage?.totalNanoAiu, currentContribution?.totalNanoAiu),
     totalApiDurationMs: subtractOptional(aggregateUsage?.totalApiDurationMs, currentContribution?.totalApiDurationMs),
     totalDurationMs: subtractOptional(aggregateUsage?.totalDurationMs, currentContribution?.totalDurationMs),
@@ -283,7 +260,6 @@ function toFrozenContribution(sessionUsage) {
     sessionId: sessionUsage.sessionId,
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
-    premiumRequests: sessionUsage.premiumRequests,
     totalNanoAiu: sessionUsage.totalNanoAiu,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,

@@ -24,22 +24,16 @@ function main() {
     const { sessionUsage } = mergeStatusLinePayload(payload);
     const currencyConfig = resolveCurrencyConfig();
     const planInfo = resolveStatusLinePlan();
-    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig, planInfo.plan);
-    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig, planInfo.plan);
+    const usageBased = tryCalculate(sessionUsage, currencyConfig, planInfo.plan);
     const aggregateUsageBased = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig, planInfo.plan)
-      : null;
-    const aggregatePremiumRequests = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig, planInfo.plan)
+      ? tryCalculate(sessionUsage.aggregateUsage, currencyConfig, planInfo.plan)
       : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale(), planInfo);
+      : formatStatusLine(usageBased, sessionUsage, aggregateUsageBased, resolveLocale(), planInfo);
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
-      aggregatePremiumRequests,
       aggregateUsageBased,
       costLine,
-      premiumRequests,
       sessionUsage,
       usageBased
     }));
@@ -102,20 +96,18 @@ function readStdin() {
   }
 }
 
-function tryCalculate(sessionUsage, billingModel, currencyConfig, plan) {
+function tryCalculate(sessionUsage, currencyConfig, plan) {
   try {
     return calculateSessionCost(sessionUsage, {
-      billingModel,
       plan,
       currency: currencyConfig.currency,
       exchangeRates: currencyConfig.exchangeRates,
       exchangeRateMetadata: currencyConfig.exchangeRateMetadata,
-      promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
-      remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
+      promotionalAllowance: readOptionalBoolean(process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE),
       billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
     });
   } catch (error) {
-    logDebugError(`failed to calculate ${billingModel} statusline cost`, error);
+    logDebugError("failed to calculate statusline cost", error);
     return null;
   }
 }
@@ -136,7 +128,7 @@ function resolveStatusLinePlan() {
   };
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale, planInfo) {
+function formatStatusLine(usageBased, sessionUsage, aggregateUsageBased, locale, planInfo) {
   const parts = [];
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   if (isResumed && aggregateUsageBased) {
@@ -146,13 +138,6 @@ function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUs
     }
   } else if (usageBased) {
     parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr${formatAllowanceShare(usageBased, planInfo)})`)}`);
-  }
-  if (isResumed && aggregatePremiumRequests) {
-    parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total${formatAllowanceShare(aggregatePremiumRequests, planInfo)}`));
-  } else if (premiumRequests) {
-    parts.push(yellow(`${premiumRequests.totalPremiumRequests} PRU${formatAllowanceShare(premiumRequests, planInfo)}`));
-  } else if (sessionUsage.premiumRequests !== undefined) {
-    parts.push(yellow(`${sessionUsage.premiumRequests} PRU`));
   }
   if (isResumed) {
     parts.push(dim(`${sessionUsage.logicalSession.instanceCount} instances`));
@@ -188,6 +173,13 @@ function readPercentage(value) {
   return Number.isFinite(percentage) && percentage >= 0 ? percentage : null;
 }
 
+function readOptionalBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return String(value).toLowerCase() === "true";
+}
+
 function formatPercentage(value) {
   if (value > 0 && value < 0.1) {
     return "<0.1%";
@@ -198,16 +190,14 @@ function formatPercentage(value) {
   return `${Math.round(value)}%`;
 }
 
-function buildEnrichedPayload(payload, { aggregatePremiumRequests, aggregateUsageBased, costLine, premiumRequests, sessionUsage, usageBased }) {
+function buildEnrichedPayload(payload, { aggregateUsageBased, costLine, sessionUsage, usageBased }) {
   return {
     ...payload,
     copilot_cost: {
-      schema_version: 1,
+      schema_version: 2,
       status_line: costLine,
       aggregate_usage_based: aggregateUsageBased,
-      aggregate_premium_requests: aggregatePremiumRequests,
       usage_based: usageBased,
-      premium_requests: premiumRequests,
       session_usage: sessionUsage
     }
   };
@@ -380,10 +370,6 @@ function green(value) {
 
 function magenta(value) {
   return color("38;5;213", value);
-}
-
-function yellow(value) {
-  return color("38;5;214", value);
 }
 
 function logDebugError(message, error) {

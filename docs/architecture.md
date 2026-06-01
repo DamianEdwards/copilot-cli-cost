@@ -16,7 +16,7 @@ The implementation is split into four layers.
 | Layer | Responsibility |
 | --- | --- |
 | Metering | Collect session id, model id, request count, and token buckets. |
-| Pricing | Compute premium request units or usage-based AI Credit cost. |
+| Pricing | Compute usage-based AI Credit cost from model token buckets. |
 | Entitlement | Resolve the user's plan and billing entity. |
 | Presentation | Render `/cost`, status line, side panel, JSON output, and currency conversion. |
 
@@ -50,26 +50,7 @@ Canonical cost output:
 - per-model breakdown
 - plan allowance impact
 
-## Billing calculators
-
-### Premium requests
-
-`requests * modelMultiplier`
-
-The calculator supports:
-
-- `current`
-- `annual-after-2026-06-01`
-
-If Copilot CLI has already reported a session-level premium request count, the calculator can accept that directly and skip model multipliers:
-
-```powershell
-node src/cli/cost.js --premium-requests 12.5 --plan pro
-```
-
-This is useful for `/usage` or `/session info` output because those commands report post-multiplier premium request units. The direct PRU path can show allowance impact and overage-equivalent value immediately. To calculate an actual incremental charge, it also needs the user's remaining monthly premium requests before the session.
-
-### Usage-based billing
+## Usage-based billing
 
 ```text
 max(inputTokens - cachedInputTokens, 0) * model.inputPerMillionUsd
@@ -101,11 +82,11 @@ Reasoning tokens are shown as informational only by default because GitHub's pub
 
 The estimate is intended to be explainable and reconcilable, not an invoice:
 
-- Token buckets and premium request totals come from Copilot CLI's own live `usage.getMetrics()` RPC, completed-session `modelMetrics`, or statusline counters.
+- Token buckets come from Copilot CLI's own live `usage.getMetrics()` RPC, completed-session `modelMetrics`, or statusline counters.
 - Per-token rates and AI Credit conversion match GitHub's published model pricing table: prices are per 1M tokens and `1 AI credit = $0.01 USD`.
 - Individual plan allowances preserve the published base/flex split and derive included AI Credits from `baseAiCredits + flexAiCredits`.
+- Business and Enterprise promotional allowances are applied by default during the June 1-September 1, 2026 transition window and preserved as `promotionalAiCredits`.
 - Anthropic cache write charges are modeled separately because GitHub documents a cache-write rate for those models.
-- Premium request calculations prefer Copilot's already-multiplied PRU total when present, avoiding double-applying local multiplier assumptions.
 - Business and Enterprise AI Credit allowances are pooled at the billing entity level, so the session estimate does not necessarily represent incremental billable spend.
 - USD is canonical; non-USD values are display estimates based on a cached Frankfurter exchange-rate snapshot or an explicit exchange-rate override.
 - Published rates, plan allowances, and transition dates can change, so `src/core/rates.js` should be periodically checked against GitHub's billing docs.
@@ -150,17 +131,17 @@ Documented hooks expose lifecycle events but not per-model token usage. The hook
 
 The Copilot usage metrics REST API is not the primary source for session-level cost. It returns daily or 28-day organization/enterprise reports via download links and is useful for reconciliation, but it does not expose a documented `sessionId` filter or a live per-session endpoint.
 
-Completed sessions include counters in `session.shutdown`, including `totalPremiumRequests` and per-model token buckets under `modelMetrics`. That is enough to calculate actual completed-session cost.
+Completed sessions include per-model token buckets under `modelMetrics` in `session.shutdown`. That is enough to calculate actual completed-session cost.
 
 Active sessions should use the deterministic SDK extension first. It calls `session.rpc.usage.getMetrics()` and normalizes the result via `src/core/usage-metrics.js`. The RPC result includes:
 
-- `totalPremiumRequestCost`
+- Copilot-reported AI credit usage (`totalNanoAiu`), when available
 - `totalUserRequests`
 - `totalApiDurationMs`
 - `currentModel`
 - `lastCallInputTokens` and `lastCallOutputTokens`
 - `codeChanges`
-- per-model `requests.count`, `requests.cost`, and token buckets under `usage`
+- per-model `requests.count` and token buckets under `usage`
 
 The extension writes the normalized RPC snapshot to the platform live-session cache so the standalone CLI and statusline ecosystem can consume the same shape.
 
@@ -204,7 +185,6 @@ The payload includes:
 
 - `session_id`
 - `model.id` and `model.display_name`
-- `cost.total_premium_requests`
 - cumulative token buckets under `context_window.total_*`
 - last-call token buckets under `context_window.last_call_*`
 

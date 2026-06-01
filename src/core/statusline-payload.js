@@ -50,7 +50,6 @@ export function statusLinePayloadToSessionUsage(payload, options = {}) {
     workspaceDirectory: readString(payload.workspace?.current_dir) ?? readString(payload.cwd),
     transcriptPath: readString(payload.transcript_path),
     version: readString(payload.version),
-    premiumRequests: readOptionalNumber(payload.cost?.total_premium_requests),
     totalNanoAiu,
     aiCreditsFormatted: readString(payload.ai_used?.formatted),
     totalApiDurationMs: readOptionalNumber(payload.cost?.total_api_duration_ms),
@@ -160,7 +159,7 @@ function usageWeight(sessionUsage) {
       + numberOrZero(item.cacheWriteTokens)
       + numberOrZero(item.outputTokens)
       + numberOrZero(item.reasoningTokens),
-    numberOrZero(sessionUsage?.premiumRequests) + numberOrZero(sessionUsage?.totalNanoAiu)
+    numberOrZero(sessionUsage?.totalNanoAiu)
   );
 }
 
@@ -231,7 +230,6 @@ function withResumeLogicalSession(sessionUsage, logicalSession) {
 
 function withLogicalSessionAggregate(sessionUsage, index, aggregateUsage) {
   const instanceCount = index.instances.length;
-  const premiumRequestsAggregation = aggregateUsage.logicalSession?.premiumRequestsAggregation;
   const hasAggregateHistory = usageWeight(aggregateUsage) > usageWeight(sessionUsage);
   const resumeCount = Math.max(
     Number(sessionUsage.logicalSession?.resumeCount ?? 0),
@@ -245,8 +243,7 @@ function withLogicalSessionAggregate(sessionUsage, index, aggregateUsage) {
       instances: index.instances,
       instanceCount,
       resumeCount,
-      isResumed: sessionUsage.logicalSession?.isResumed === true || instanceCount > 1 || hasAggregateHistory,
-      premiumRequestsAggregation
+      isResumed: sessionUsage.logicalSession?.isResumed === true || instanceCount > 1 || hasAggregateHistory
     },
     aggregateUsage
   };
@@ -270,7 +267,6 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
     }
   }
 
-  const premiumRequestsAggregation = aggregatePremiumRequests(contributions);
   const totalNanoAiuAggregation = aggregateCumulativeCounter(contributions, "totalNanoAiu");
   const aggregateUsage = {
     sessionId: index.id,
@@ -283,7 +279,6 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
     sessionName: currentInstance?.sessionName,
     workspaceDirectory: currentInstance?.workspaceDirectory,
     transcriptPath: index.source === "transcript_path" ? index.key : undefined,
-    premiumRequests: premiumRequestsAggregation.value,
     totalNanoAiu: totalNanoAiuAggregation.value,
     totalApiDurationMs: sumOptional(contributions, "totalApiDurationMs"),
     totalDurationMs: sumOptional(contributions, "totalDurationMs"),
@@ -299,22 +294,14 @@ function buildLogicalSessionAggregate(index, currentInstanceId, options) {
       instanceCount: index.instances.length,
       resumeCount: Math.max(index.instances.length - 1, 0),
       isResumed: index.instances.length > 1,
-      premiumRequestsAggregation,
       totalNanoAiuAggregation
     }
   };
 
-  if (aggregateUsage.premiumRequests === undefined) {
-    delete aggregateUsage.premiumRequests;
-  }
   if (aggregateUsage.totalNanoAiu === undefined) {
     delete aggregateUsage.totalNanoAiu;
   }
   return aggregateUsage;
-}
-
-function aggregatePremiumRequests(contributions) {
-  return aggregateCumulativeCounter(contributions, "premiumRequests");
 }
 
 function aggregateCumulativeCounter(contributions, property) {
@@ -400,7 +387,6 @@ function toFrozenContribution(sessionUsage) {
     sessionId: `${sessionUsage.sessionId}#reset-${readFrozenContributions(sessionUsage).length + 1}`,
     source: sessionUsage.source,
     timestamp: sessionUsage.timestamp,
-    premiumRequests: sessionUsage.premiumRequests,
     totalNanoAiu: sessionUsage.totalNanoAiu,
     totalApiDurationMs: sessionUsage.totalApiDurationMs,
     totalDurationMs: sessionUsage.totalDurationMs,

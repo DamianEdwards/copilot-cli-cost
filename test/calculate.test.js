@@ -72,6 +72,7 @@ test("calculates usage-based allowances with individual flex allotments", () => 
     plan: "pro+",
     currency: "USD"
   });
+
   const max = calculateSessionCost(sessionUsage, {
     billingModel: "usage-based",
     plan: "Copilot Max",
@@ -99,6 +100,63 @@ test("calculates usage-based allowances with individual flex allotments", () => 
   });
   assert.equal(free.includedAiCredits, 0);
   assert.equal(free.allowanceUsagePercentage, null);
+});
+
+test("includes Business and Enterprise promotional allowances during the transition period", () => {
+  const business = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    currentDate: "2026-06-01T12:00:00.000Z",
+    plan: "business",
+    currency: "USD"
+  });
+  const enterprise = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    currentDate: "2026-06-01T12:00:00.000Z",
+    plan: "enterprise",
+    currency: "USD"
+  });
+
+  assert.equal(business.includedAiCredits, 3000);
+  assert.deepEqual(business.includedAiCreditAllotment, {
+    baseAiCredits: 1900,
+    flexAiCredits: 0,
+    promotionalAiCredits: 1100,
+    totalAiCredits: 3000
+  });
+  assert.equal(enterprise.includedAiCredits, 7000);
+  assert.deepEqual(enterprise.includedAiCreditAllotment, {
+    baseAiCredits: 3900,
+    flexAiCredits: 0,
+    promotionalAiCredits: 3100,
+    totalAiCredits: 7000
+  });
+});
+
+test("can override Business and Enterprise promotional allowances", () => {
+  const forcedOff = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    currentDate: "2026-06-01T12:00:00.000Z",
+    promotionalAllowance: false,
+    plan: "enterprise",
+    currency: "USD"
+  });
+  const afterPromotion = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    currentDate: "2026-09-01T00:00:00.000Z",
+    plan: "enterprise",
+    currency: "USD"
+  });
+  const forcedOn = calculateSessionCost(sessionUsage, {
+    billingModel: "usage-based",
+    currentDate: "2026-09-01T00:00:00.000Z",
+    promotionalAllowance: true,
+    plan: "enterprise",
+    currency: "USD"
+  });
+
+  assert.equal(forcedOff.includedAiCredits, 3900);
+  assert.equal(afterPromotion.includedAiCredits, 3900);
+  assert.equal(forcedOn.includedAiCredits, 7000);
 });
 
 test("calculates usage-based input billing from uncached input tokens", () => {
@@ -159,27 +217,10 @@ test("falls back to known model prefixes for suffixed display names", () => {
       currency: "USD"
     }
   );
-  const premiumRequests = calculateSessionCost(
-    {
-      sessionId: "suffixed-pru-session",
-      modelUsage: [
-        {
-          model: "Claude Opus 4.7 (1M Context)(Internal only)",
-          requests: 2
-        }
-      ]
-    },
-    {
-      billingModel: "premium-requests"
-    }
-  );
-
   assert.equal(opus.modelBreakdown[0].model, "claude-opus-4.7");
   assert.equal(opus.totalUsd, 30);
   assert.equal(mini.modelBreakdown[0].model, "gpt-5.4-mini");
   assert.equal(mini.totalUsd, 0.75);
-  assert.equal(premiumRequests.modelBreakdown[0].model, "claude-opus-4.7");
-  assert.equal(premiumRequests.totalPremiumRequests, 30);
 });
 
 test("prefers Copilot-reported session AI credits when available", () => {
@@ -322,8 +363,7 @@ test("calculates zero usage when model usage is not available yet", () => {
   const result = calculateSessionCost(
     {
       sessionId: "new-session",
-      source: "copilot-cli-rpc-usage",
-      premiumRequests: 0
+      source: "copilot-cli-rpc-usage"
     },
     {
       billingModel: "usage-based",
@@ -346,47 +386,8 @@ test("normalizes empty usage.getMetrics responses as zero usage", () => {
   });
 
   assert.equal(usage.sessionId, "new-rpc-session");
-  assert.equal(usage.premiumRequests, 0);
+  assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
   assert.deepEqual(usage.modelUsage, []);
-});
-
-test("calculates premium request billing from model multipliers", () => {
-  const result = calculateSessionCost(sessionUsage, {
-    billingModel: "premium-requests",
-    plan: "pro-plus",
-    multiplierSet: "current"
-  });
-
-  assert.equal(result.totalPremiumRequests, 16);
-  assert.equal(result.includedPremiumRequests, 1500);
-  assert.equal(result.allowanceUsagePercentage, 1.066667);
-});
-
-test("calculates premium request billing from direct PRU count", () => {
-  const result = calculateSessionCost(
-    {
-      sessionId: "direct-pru-session",
-      premiumRequests: 12.5
-    },
-    {
-      billingModel: "premium-requests",
-      plan: "pro",
-      remainingPremiumRequests: 10,
-      currency: "EUR",
-      exchangeRates: {
-        EUR: 0.9
-      }
-    }
-  );
-
-  assert.equal(result.source, "direct-premium-requests");
-  assert.equal(result.totalPremiumRequests, 12.5);
-  assert.equal(result.allowanceUsagePercentage, 4.166667);
-  assert.equal(result.overageEquivalentUsd, 0.5);
-  assert.equal(result.displayOverageEquivalent, 0.45);
-  assert.equal(result.billablePremiumRequests, 2.5);
-  assert.equal(result.billableUsd, 0.1);
-  assert.equal(result.displayBillable, 0.09);
 });
 
 test("supports non-USD display currency with explicit exchange rate", () => {
@@ -602,7 +603,7 @@ test("reads Copilot CLI session shutdown metrics from events jsonl", () => {
   assert.equal(usage.source, "copilot-cli-events");
   assert.equal(usage.metricsEventType, "session.shutdown");
   assert.equal(usage.metricsStale, false);
-  assert.equal(usage.premiumRequests, 7.5);
+  assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
   assert.equal(usage.totalNanoAiu, 30586900000);
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
   assert.equal(usage.modelUsage[0].inputTokens, 135659);
@@ -681,10 +682,9 @@ test("lists completed sessions that have cost metrics", () => {
           timestamp: "2026-05-06T12:00:00.000Z",
           data: {
             currentModel: "gpt-5.5",
-            totalPremiumRequests: 7.5,
             modelMetrics: {
               "gpt-5.5": {
-                requests: { count: 1, cost: 7.5 },
+                requests: { count: 1 },
                 usage: {
                   inputTokens: 135659,
                   cacheReadTokens: 91648,
@@ -774,11 +774,10 @@ test("can read richest Copilot CLI event metrics when later resume metrics reset
         type: "session.shutdown",
         timestamp: "2026-05-13T18:00:00.000Z",
         data: {
-          totalPremiumRequests: 7.5,
           currentModel: "gpt-5.5",
           modelMetrics: {
             "gpt-5.5": {
-              requests: { count: 1, cost: 7.5 },
+              requests: { count: 1 },
               usage: {
                 inputTokens: 1000,
                 cacheReadTokens: 750,
@@ -792,7 +791,6 @@ test("can read richest Copilot CLI event metrics when later resume metrics reset
         type: "session.shutdown",
         timestamp: "2026-05-13T20:00:00.000Z",
         data: {
-          totalPremiumRequests: 0,
           currentModel: "gpt-5.5",
           modelMetrics: {}
         }
@@ -803,9 +801,7 @@ test("can read richest Copilot CLI event metrics when later resume metrics reset
     const richest = readRichestSessionUsageFromEvents("resumed-events", { eventsPath });
 
     assert.equal(latest.modelUsage.length, 0);
-    assert.equal(latest.premiumRequests, 0);
     assert.equal(richest.modelUsage[0].inputTokens, 1000);
-    assert.equal(richest.premiumRequests, 7.5);
     assert.equal(richest.metricsStale, true);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
@@ -818,7 +814,7 @@ test("normalizes Copilot CLI statusline payloads", () => {
 
   assert.equal(usage.source, "copilot-cli-statusline");
   assert.equal(usage.sessionId, "statusline-sample-session");
-  assert.equal(usage.premiumRequests, 7.5);
+  assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
   assert.equal(usage.totalNanoAiu, 30586900000);
   assert.equal(usage.aiCreditsFormatted, "30.59");
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
@@ -861,7 +857,7 @@ test("normalizes Copilot CLI usage.getMetrics results", () => {
 
   assert.equal(usage.source, "copilot-cli-rpc-usage");
   assert.equal(usage.metricsEventType, "usage.getMetrics");
-  assert.equal(usage.premiumRequests, 7.5);
+  assert.equal(Object.hasOwn(usage, "premiumRequests"), false);
   assert.equal(usage.totalNanoAiu, 30586900000);
   assert.equal(usage.lastCallInputTokens, 42);
   assert.equal(usage.modelUsage[0].model, "gpt-5.5");
@@ -878,7 +874,6 @@ test("preserves prior usage when live RPC counters reset after resume", () => {
     sessionId: "resumed-rpc-session",
     source: "copilot-cli-statusline",
     timestamp: "2026-05-13T18:00:00.000Z",
-    premiumRequests: 7.5,
     modelUsage: [
       {
         model: "gpt-5.5",
@@ -891,7 +886,6 @@ test("preserves prior usage when live RPC counters reset after resume", () => {
     ]
   };
   const current = usageMetricsToSessionUsage("resumed-rpc-session", {
-    totalPremiumRequestCost: 0,
     currentModel: "gpt-5.5",
     modelMetrics: {}
   });
@@ -900,7 +894,7 @@ test("preserves prior usage when live RPC counters reset after resume", () => {
 
   assert.equal(merged.logicalSession.isResumed, true);
   assert.equal(merged.logicalSession.resetCount, 1);
-  assert.equal(merged.aggregateUsage.premiumRequests, 7.5);
+  assert.equal(Object.hasOwn(merged.aggregateUsage, "premiumRequests"), false);
   assert.equal(merged.aggregateUsage.modelUsage[0].inputTokens, 135659);
   assert.equal(merged.modelUsage.length, 0);
 });
@@ -910,7 +904,7 @@ test("does not compound live RPC aggregate usage on idle refresh", () => {
     sessionId: "idle-rpc-session",
     source: "copilot-cli-rpc-usage",
     timestamp: "2026-05-13T18:00:00.000Z",
-    premiumRequests: 37.5,
+    totalNanoAiu: 37_500_000_000,
     modelUsage: [
       {
         model: "gpt-5.5",
@@ -942,7 +936,7 @@ test("does not compound live RPC aggregate usage on idle refresh", () => {
       sessionId: "transcript:idle",
       source: "copilot-cli-resumed-session-aggregate",
       timestamp: "2026-05-13T18:00:00.000Z",
-      premiumRequests: 37.5,
+      totalNanoAiu: 37_500_000_000,
       modelUsage: [
         {
           model: "gpt-5.5",
@@ -953,11 +947,11 @@ test("does not compound live RPC aggregate usage on idle refresh", () => {
     }
   };
   const current = usageMetricsToSessionUsage("idle-rpc-session", {
-    totalPremiumRequestCost: 37.5,
+    totalNanoAiu: 37_500_000_000,
     currentModel: "gpt-5.5",
     modelMetrics: {
       "gpt-5.5": {
-        requests: { count: 5, cost: 37.5 },
+        requests: { count: 5 },
         usage: {
           inputTokens: 1_000,
           outputTokens: 100
@@ -973,7 +967,7 @@ test("does not compound live RPC aggregate usage on idle refresh", () => {
   assert.equal(merged.logicalSession.frozenContributions.length, 158);
   assert.equal(merged.aggregateUsage.modelUsage[0].inputTokens, 159_000);
   assert.equal(merged.aggregateUsage.modelUsage[0].outputTokens, 15_900);
-  assert.equal(merged.aggregateUsage.premiumRequests, 37.5);
+  assert.equal(merged.aggregateUsage.totalNanoAiu, 37_500_000_000);
   assert.equal(merged.modelUsage[0].inputTokens, 1_000);
 });
 
@@ -1018,7 +1012,6 @@ test("aggregates resumed statusline instances by transcript path", () => {
 
     const second = structuredClone(first);
     second.session_id = "resumed-instance-2";
-    second.cost.total_premium_requests = 2.5;
     second.context_window.total_input_tokens = 50000;
     second.context_window.total_output_tokens = 500;
     second.context_window.total_cache_read_tokens = 10000;
@@ -1032,42 +1025,14 @@ test("aggregates resumed statusline instances by transcript path", () => {
     assert.equal(resumed.modelUsage[0].inputTokens, 50000);
     assert.equal(resumed.aggregateUsage.modelUsage[0].inputTokens, 185659);
     assert.equal(resumed.aggregateUsage.modelUsage[0].outputTokens, 1833);
-    assert.equal(resumed.aggregateUsage.premiumRequests, 10);
+    assert.equal(Object.hasOwn(resumed.aggregateUsage, "premiumRequests"), false);
 
     const refreshed = structuredClone(second);
-    refreshed.cost.total_premium_requests = 3;
     refreshed.context_window.total_input_tokens += 1000;
     const refreshedUsage = mergeStatusLinePayload(refreshed, { storeDirectory }).sessionUsage;
 
     assert.equal(refreshedUsage.modelUsage[0].inputTokens, 51000);
     assert.equal(refreshedUsage.aggregateUsage.modelUsage[0].inputTokens, 186659);
-    assert.equal(refreshedUsage.aggregateUsage.premiumRequests, 10.5);
-  } finally {
-    fs.rmSync(storeDirectory, { force: true, recursive: true });
-  }
-});
-
-test("does not double-count cumulative premium requests across resumed statusline instances", () => {
-  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
-  try {
-    const first = readFixture("statusline-payload.sample.json");
-    first.session_id = "cumulative-pru-instance-1";
-    first.transcript_path = "D:\\TEST\\.copilot\\transcripts\\cumulative-pru.jsonl";
-    mergeStatusLinePayload(first, { storeDirectory });
-
-    const second = structuredClone(first);
-    second.session_id = "cumulative-pru-instance-2";
-    second.cost.total_premium_requests = 8;
-    second.context_window.total_input_tokens = 50000;
-    second.context_window.total_output_tokens = 500;
-    second.context_window.total_cache_read_tokens = 10000;
-    second.context_window.total_cache_write_tokens = 2000;
-    second.context_window.total_reasoning_tokens = 20;
-
-    const usage = mergeStatusLinePayload(second, { storeDirectory }).sessionUsage;
-
-    assert.equal(usage.aggregateUsage.premiumRequests, 8);
-    assert.equal(usage.logicalSession.premiumRequestsAggregation.mode, "latest-cumulative");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1087,14 +1052,13 @@ test("preserves prior contribution when statusline counters reset within one ins
     reset.context_window.total_cache_read_tokens = 20;
     reset.context_window.total_cache_write_tokens = 5;
     reset.context_window.total_reasoning_tokens = 1;
-    reset.cost.total_premium_requests = 1;
 
     const usage = mergeStatusLinePayload(reset, { storeDirectory }).sessionUsage;
     const cached = readLiveSession("reset-instance", { storeDirectory });
 
     assert.equal(usage.logicalSession.resetCount, 1);
     assert.equal(cached.aggregateUsage.modelUsage[0].inputTokens, 135759);
-    assert.equal(cached.aggregateUsage.premiumRequests, 8.5);
+    assert.equal(Object.hasOwn(cached.aggregateUsage, "premiumRequests"), false);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1107,7 +1071,6 @@ test("statusline preserves resumed aggregate when current payload is zero", () =
       sessionId: "zero-statusline-resume",
       source: "copilot-cli-rpc-usage",
       timestamp: "2026-05-13T20:00:00.000Z",
-      premiumRequests: 0,
       modelUsage: [],
       logicalSession: {
         id: "session:zero-statusline-resume",
@@ -1123,7 +1086,6 @@ test("statusline preserves resumed aggregate when current payload is zero", () =
         sessionId: "session:zero-statusline-resume",
         source: "copilot-cli-resumed-session-aggregate",
         timestamp: "2026-05-13T20:00:00.000Z",
-        premiumRequests: 7.5,
         modelUsage: [
           {
             model: "gpt-5.5",
@@ -1139,7 +1101,6 @@ test("statusline preserves resumed aggregate when current payload is zero", () =
 
     const payload = readFixture("statusline-payload.sample.json");
     payload.session_id = "zero-statusline-resume";
-    payload.cost.total_premium_requests = 0;
     payload.context_window.total_input_tokens = 0;
     payload.context_window.total_output_tokens = 0;
     payload.context_window.total_cache_read_tokens = 0;
@@ -1152,13 +1113,13 @@ test("statusline preserves resumed aggregate when current payload is zero", () =
 
     assert.equal(usage.logicalSession.isResumed, true);
     assert.equal(usage.aggregateUsage.modelUsage[0].inputTokens, 135659);
-    assert.equal(usage.aggregateUsage.premiumRequests, 7.5);
+    assert.equal(Object.hasOwn(usage.aggregateUsage, "premiumRequests"), false);
     assert.equal(usage.modelUsage[0].inputTokens, 0);
 
     const refreshed = mergeStatusLinePayload(payload, { storeDirectory }).sessionUsage;
     assert.equal(refreshed.logicalSession.isResumed, true);
     assert.equal(refreshed.aggregateUsage.modelUsage[0].inputTokens, 135659);
-    assert.equal(refreshed.aggregateUsage.premiumRequests, 7.5);
+    assert.equal(Object.hasOwn(refreshed.aggregateUsage, "premiumRequests"), false);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1170,7 +1131,7 @@ test("statusline CLI enriches passthrough payload by default", () => {
   try {
     fs.writeFileSync(
       passthroughPath,
-      "import fs from 'node:fs'; const raw = fs.readFileSync(0, 'utf8'); const payload = JSON.parse(raw); process.stdout.write(`base ${payload.model.id} ${payload.copilot_cost.usage_based.aiCredits} credits ${payload.copilot_cost.premium_requests.totalPremiumRequests} PRU`);"
+      "import fs from 'node:fs'; const raw = fs.readFileSync(0, 'utf8'); const payload = JSON.parse(raw); process.stdout.write(`base ${payload.model.id} v${payload.copilot_cost.schema_version} ${payload.copilot_cost.usage_based.aiCredits} credits ${Object.hasOwn(payload.copilot_cost, 'premium_requests')}`);"
     );
 
     const input = fs.readFileSync(new URL("../fixtures/statusline-payload.sample.json", import.meta.url), "utf8");
@@ -1194,7 +1155,7 @@ test("statusline CLI enriches passthrough payload by default", () => {
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "base gpt-5.5 30.5869 credits 7.5 PRU");
+    assert.equal(result.stdout, "base gpt-5.5 v2 30.5869 credits false");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1238,7 +1199,7 @@ test("statusline CLI can decorate passthrough statusline output", () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^base gpt-5\.5 · 💸 Cost /);
     assert.match(result.stdout, /~\$0\.3059 \(30\.6 cr, 2% pro\)/);
-    assert.match(result.stdout, /7\.5 PRU, 2\.5% pro/);
+    assert.doesNotMatch(result.stdout, /PRU/);
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1271,7 +1232,7 @@ test("statusline CLI shows allowance percentage for the configured plan", () => 
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · 7.5 PRU, 2.5% pro · last 42K in/3K out");
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · last 42K in/3K out");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1314,6 +1275,7 @@ test("statusline CLI uses cached detected subscription plan", () => {
           COPILOT_COST_LOCALE: "en-US",
           COPILOT_COST_STATUSLINE_COLOR: "false",
           COPILOT_COST_LIVE_STORE: storeDirectory,
+          COPILOT_COST_PROMOTIONAL_ALLOWANCE: "true",
           COPILOT_COST_SUBSCRIPTION_CACHE: subscriptionCache
         },
         input,
@@ -1322,7 +1284,7 @@ test("statusline CLI uses cached detected subscription plan", () => {
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 0.8% enterprise) · 7.5 PRU, 0.8% enterprise · last 42K in/3K out");
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 0.4% enterprise) · last 42K in/3K out");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1358,7 +1320,7 @@ test("statusline CLI labels fallback plan as assumed", () => {
     );
 
     assert.equal(result.status, 0);
-    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% assumed pro) · 7.5 PRU, 2.5% assumed pro · last 42K in/3K out");
+    assert.equal(result.stdout, "💸 Cost ~$0.3059 (30.6 cr, 2% assumed pro) · last 42K in/3K out");
   } finally {
     fs.rmSync(storeDirectory, { force: true, recursive: true });
   }
@@ -1535,7 +1497,87 @@ test("statusline launcher prefers copilot-cli-cost checkout from payload cwd", (
   }
 });
 
+test("generated statusline launcher prefers workspace checkout before installed fallback", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const copilotHome = path.join(storeDirectory, "copilot-home");
+    const launcherDirectory = path.join(storeDirectory, "launcher");
+    const installedPlugin = path.join(copilotHome, "installed-plugins", "_direct", "DamianEdwards--copilot-cli-cost");
+    const installedStatuslineDirectory = path.join(installedPlugin, "src", "cli");
+    fs.mkdirSync(installedStatuslineDirectory, { recursive: true });
+    fs.writeFileSync(path.join(installedPlugin, "package.json"), JSON.stringify({ name: "copilot-cli-cost", type: "module" }));
+    fs.writeFileSync(
+      path.join(installedStatuslineDirectory, "statusline.js"),
+      "import fs from 'node:fs'; const payload = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(`installed ${payload.cwd}`);"
+    );
+
+    const workspace = path.join(storeDirectory, "workspace");
+    const workspaceStatuslineDirectory = path.join(workspace, "src", "cli");
+    fs.mkdirSync(workspaceStatuslineDirectory, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({ name: "copilot-cli-cost", type: "module" }));
+    fs.writeFileSync(
+      path.join(workspaceStatuslineDirectory, "statusline.js"),
+      "import fs from 'node:fs'; const payload = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(`workspace ${payload.cwd}`);"
+    );
+
+    const configureResult = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../scripts/configure-install.mjs", import.meta.url)),
+        "--yes",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        path.join(storeDirectory, "settings.json"),
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+    assert.equal(configureResult.status, 0, configureResult.stderr || configureResult.stdout);
+
+    const launcher = path.join(launcherDirectory, process.platform === "win32" ? "statusline.cmd" : "statusline.sh");
+    const workspacePayload = readFixture("statusline-payload.sample.json");
+    workspacePayload.cwd = workspace;
+    workspacePayload.workspace.current_dir = workspace;
+    const workspaceResult = runGeneratedStatusline(launcher, workspacePayload, storeDirectory);
+
+    assert.equal(workspaceResult.status, 0, workspaceResult.stderr);
+    assert.equal(workspaceResult.stdout, `workspace ${workspace}`);
+
+    const otherDirectory = path.join(storeDirectory, "other");
+    fs.mkdirSync(otherDirectory, { recursive: true });
+    const fallbackPayload = readFixture("statusline-payload.sample.json");
+    fallbackPayload.cwd = otherDirectory;
+    fallbackPayload.workspace.current_dir = otherDirectory;
+    const fallbackResult = runGeneratedStatusline(launcher, fallbackPayload, storeDirectory);
+
+    assert.equal(fallbackResult.status, 0, fallbackResult.stderr);
+    assert.equal(fallbackResult.stdout, `installed ${otherDirectory}`);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+function runGeneratedStatusline(launcher, payload, cwd) {
+  if (process.platform === "win32") {
+    return spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "call", launcher], {
+      cwd,
+      encoding: "utf8",
+      input: JSON.stringify(payload)
+    });
+  }
+
+  return spawnSync("sh", [launcher], {
+    cwd,
+    encoding: "utf8",
+    input: JSON.stringify(payload)
+  });
+}
+
 function readFixture(name) {
   return JSON.parse(fs.readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 }
-
