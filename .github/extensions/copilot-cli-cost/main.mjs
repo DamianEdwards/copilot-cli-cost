@@ -1,4 +1,4 @@
-import { joinSession } from "@github/copilot-sdk/extension";
+import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -36,6 +36,18 @@ const webview = new CopilotWebview({
 });
 
 session = await joinSession({
+  canvases: [
+    createCanvas({
+      id: "copilot-cost",
+      displayName: "Session Cost",
+      description: "Show Copilot CLI session cost estimates in the GitHub Copilot app side panel.",
+      open: async (ctx) => ({
+        ...(await webview.openCanvas(ctx.instanceId)),
+        title: "Session Cost"
+      }),
+      onClose: async (ctx) => webview.closeCanvas(ctx.instanceId)
+    })
+  ],
   commands: [
     {
       name: "cost",
@@ -44,7 +56,7 @@ session = await joinSession({
     }
   ],
   hooks: {
-    onSessionEnd: webview.close
+    onSessionEnd: webview.closeAll
   },
   tools: [
     ...webview.tools,
