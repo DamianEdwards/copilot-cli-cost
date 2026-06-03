@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "copilot-cli-cost",
-      "description": "Estimate Copilot CLI session cost across premium-request and usage-based billing models.",
+      "description": "Estimate Copilot CLI session cost with usage-based billing.",
       "version": "0.0.12",
       "source": ".",
       "skills": "skills/"

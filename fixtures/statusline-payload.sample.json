@@ -14,8 +14,11 @@
     "total_api_duration_ms": 123456,
     "total_duration_ms": 3241747,
     "total_lines_added": 100,
-    "total_lines_removed": 50,
-    "total_premium_requests": 7.5
+    "total_lines_removed": 50
+  },
+  "ai_used": {
+    "total_nano_aiu": 30586900000,
+    "formatted": "30.59"
   },
   "context_window": {
     "total_input_tokens": 135659,

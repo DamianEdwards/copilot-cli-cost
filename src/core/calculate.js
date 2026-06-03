@@ -1,25 +1,23 @@
 import {
   AI_CREDIT_USD,
-  PREMIUM_REQUEST_USD,
   TOKENS_PER_MILLION,
   modelAliases,
   planAiCreditAllotments,
   planAllowances,
   planIds,
-  premiumRequestMultipliers,
+  promotionalAllowancePeriod,
   usageBasedRates
 } from "./rates.js";
 import { convertUsd, resolveCurrency } from "./currency.js";
 
+const NANO_AI_UNITS_PER_AI_CREDIT = 1_000_000_000;
+
 export function calculateSessionCost(sessionUsage, scenario = {}) {
   const billingModel = scenario.billingModel ?? "usage-based";
-  if (billingModel === "usage-based") {
-    return calculateUsageBasedCost(sessionUsage, scenario);
+  if (billingModel !== "usage-based") {
+    throw new Error(`Unsupported billing model: ${billingModel}`);
   }
-  if (billingModel === "premium-requests") {
-    return calculatePremiumRequestCost(sessionUsage, scenario);
-  }
-  throw new Error(`Unsupported billing model: ${billingModel}`);
+  return calculateUsageBasedCost(sessionUsage, scenario);
 }
 
 export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
@@ -27,23 +25,35 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
     exchangeRateMetadata: scenario.exchangeRateMetadata,
     exchangeRates: scenario.exchangeRates
   });
+  const directSessionAiCredits = readDirectAiCredits(
+    {
+      aiCredits: scenario.aiCredits ?? sessionUsage.aiCredits,
+      totalNanoAiu: scenario.totalNanoAiu ?? sessionUsage.totalNanoAiu
+    },
+    "copilot-cli-session-aiu"
+  );
   const modelBreakdown = normalizeModelUsage(sessionUsage).map((usage) => {
-    const modelId = normalizeModelId(usage.model);
+    const modelId = resolveKnownModelId(usage.model, usageBasedRates);
+    const directAiCredits = readDirectAiCredits(usage, "copilot-cli-model-aiu");
     const rate = usageBasedRates[modelId];
-    if (!rate) {
+    if (!rate && !directAiCredits && !directSessionAiCredits) {
       throw new Error(`No usage-based token rate configured for model '${usage.model}' (${modelId}).`);
     }
 
     const uncachedInputTokens = getUncachedInputTokens(usage.inputTokens, usage.cachedInputTokens);
-    const inputUsd = costForTokens(uncachedInputTokens, rate.inputPerMillionUsd);
-    const cachedInputUsd = costForTokens(usage.cachedInputTokens, rate.cachedInputPerMillionUsd);
-    const cacheWriteUsd = costForTokens(usage.cacheWriteTokens, rate.cacheWritePerMillionUsd);
-    const outputUsd = costForTokens(usage.outputTokens, rate.outputPerMillionUsd);
+    const inputUsd = rate ? costForTokens(uncachedInputTokens, rate.inputPerMillionUsd) : 0;
+    const cachedInputUsd = rate ? costForTokens(usage.cachedInputTokens, rate.cachedInputPerMillionUsd) : 0;
+    const cacheWriteUsd = rate ? costForTokens(usage.cacheWriteTokens, rate.cacheWritePerMillionUsd) : 0;
+    const outputUsd = rate ? costForTokens(usage.outputTokens, rate.outputPerMillionUsd) : 0;
     const billReasoningTokens = scenario.billReasoningTokens === true;
-    const reasoningUsd = billReasoningTokens
+    const reasoningUsd = rate && billReasoningTokens
       ? costForTokens(usage.reasoningTokens, rate.outputPerMillionUsd)
       : 0;
-    const totalUsd = roundCost(inputUsd + cachedInputUsd + cacheWriteUsd + outputUsd + reasoningUsd);
+    const tokenEstimatedTotalUsd = roundCost(inputUsd + cachedInputUsd + cacheWriteUsd + outputUsd + reasoningUsd);
+    const totalUsd = directAiCredits
+      ? aiCreditsToUsd(directAiCredits.aiCredits)
+      : tokenEstimatedTotalUsd;
+    const aiCredits = directAiCredits?.aiCredits ?? usdToAiCredits(tokenEstimatedTotalUsd);
 
     return {
       model: modelId,
@@ -56,11 +66,11 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens,
       rates: {
-        inputPerMillionUsd: rate.inputPerMillionUsd,
-        cachedInputPerMillionUsd: rate.cachedInputPerMillionUsd,
-        cacheWritePerMillionUsd: rate.cacheWritePerMillionUsd,
-        outputPerMillionUsd: rate.outputPerMillionUsd,
-        reasoningPerMillionUsd: billReasoningTokens ? rate.outputPerMillionUsd : 0
+        inputPerMillionUsd: rate?.inputPerMillionUsd,
+        cachedInputPerMillionUsd: rate?.cachedInputPerMillionUsd,
+        cacheWritePerMillionUsd: rate?.cacheWritePerMillionUsd,
+        outputPerMillionUsd: rate?.outputPerMillionUsd,
+        reasoningPerMillionUsd: rate && billReasoningTokens ? rate.outputPerMillionUsd : 0
       },
       inputUsd,
       cachedInputUsd,
@@ -68,16 +78,32 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
       outputUsd,
       reasoningUsd,
       totalUsd,
-      aiCredits: usdToAiCredits(totalUsd),
-      displayTotal: convertUsd(totalUsd, currency)
+      tokenEstimatedTotalUsd,
+      tokenEstimatedAiCredits: usdToAiCredits(tokenEstimatedTotalUsd),
+      totalNanoAiu: directAiCredits?.totalNanoAiu,
+      aiCredits,
+      creditCalculationMethod: directAiCredits ? "copilot-aiu" : "token-estimate",
+      creditCalculationSource: directAiCredits?.source ?? "token-rate-estimate",
+      displayTotal: convertUsd(totalUsd, currency),
+      tokenEstimatedDisplayTotal: convertUsd(tokenEstimatedTotalUsd, currency)
     };
   });
 
-  const totalUsd = roundCost(sum(modelBreakdown, (item) => item.totalUsd));
-  const aiCredits = usdToAiCredits(totalUsd);
+  const tokenEstimatedTotalUsd = roundCost(sum(modelBreakdown, (item) => item.tokenEstimatedTotalUsd));
+  const tokenEstimatedAiCredits = usdToAiCredits(tokenEstimatedTotalUsd);
+  const modelCreditSource = getModelCreditSource(modelBreakdown);
+  const totalUsd = directSessionAiCredits
+    ? aiCreditsToUsd(directSessionAiCredits.aiCredits)
+    : roundCost(sum(modelBreakdown, (item) => item.totalUsd));
+  const aiCredits = directSessionAiCredits?.aiCredits ?? usdToAiCredits(totalUsd);
+  const creditCalculationMethod = directSessionAiCredits
+    ? "copilot-aiu"
+    : modelCreditSource.method;
+  const creditCalculationSource = directSessionAiCredits?.source ?? modelCreditSource.source;
   const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
   const includedAiCreditAllotment = getIncludedAiCreditAllotment(plan, scenario);
   const includedAiCredits = includedAiCreditAllotment.totalAiCredits;
+  const allowanceUsagePercentage = calculateAllowanceUsagePercentage(aiCredits, includedAiCredits);
 
   return {
     billingModel: "usage-based",
@@ -93,80 +119,18 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
     totalUsd,
     displayTotal: convertUsd(totalUsd, currency),
     aiCredits,
+    totalNanoAiu: directSessionAiCredits?.totalNanoAiu,
+    tokenEstimatedTotalUsd,
+    tokenEstimatedDisplayTotal: convertUsd(tokenEstimatedTotalUsd, currency),
+    tokenEstimatedAiCredits,
+    creditCalculationMethod,
+    creditCalculationSource,
     includedAiCreditAllotment,
     includedAiCredits,
+    allowanceUsagePercentage,
     includedCreditsApplied: Math.min(aiCredits, includedAiCredits),
     overageCreditsIfAllowanceExhausted: aiCredits,
     overageUsdIfAllowanceExhausted: totalUsd,
-    modelBreakdown
-  };
-}
-
-export function calculatePremiumRequestCost(sessionUsage, scenario = {}) {
-  const currency = resolveCurrency(scenario.currency ?? sessionUsage.currency ?? "USD", {
-    exchangeRateMetadata: scenario.exchangeRateMetadata,
-    exchangeRates: scenario.exchangeRates
-  });
-  const multiplierSet = scenario.multiplierSet ?? "current";
-  const multipliers = premiumRequestMultipliers[multiplierSet];
-  if (!multipliers) {
-    throw new Error(`Unsupported premium request multiplier set: ${multiplierSet}`);
-  }
-
-  const directPremiumRequests = readDirectPremiumRequests(sessionUsage, scenario);
-  const modelBreakdown = directPremiumRequests === undefined ? normalizeModelUsage(sessionUsage).map((usage) => {
-    const modelId = normalizeModelId(usage.model);
-    const multiplier = multipliers[modelId];
-    if (multiplier === undefined) {
-      throw new Error(`No premium request multiplier configured for model '${usage.model}' (${modelId}).`);
-    }
-
-    const requests = usage.requests || 0;
-    const premiumRequests = roundCost(requests * multiplier);
-
-    return {
-      model: modelId,
-      displayName: usage.model,
-      requests,
-      multiplier,
-      premiumRequests
-    };
-  }) : [];
-
-  const plan = normalizePlanId(scenario.plan ?? sessionUsage.plan ?? planIds.pro);
-  const totalPremiumRequests = directPremiumRequests ?? roundCost(sum(modelBreakdown, (item) => item.premiumRequests));
-  const includedPremiumRequests = planAllowances.premiumRequests[plan] ?? 0;
-  const remainingPremiumRequestsBeforeSession = readOptionalNumber(scenario.remainingPremiumRequests ?? sessionUsage.remainingPremiumRequestsBeforeSession);
-  const billablePremiumRequests = remainingPremiumRequestsBeforeSession === undefined
-    ? null
-    : Math.max(roundCost(totalPremiumRequests - remainingPremiumRequestsBeforeSession), 0);
-  const billableUsd = billablePremiumRequests === null ? null : roundCost(billablePremiumRequests * PREMIUM_REQUEST_USD);
-  const overageEquivalentUsd = roundCost(totalPremiumRequests * PREMIUM_REQUEST_USD);
-
-  return {
-    billingModel: "premium-requests",
-    sessionId: sessionUsage.sessionId,
-    sessionSource: sessionUsage.source,
-    metricsEventType: sessionUsage.metricsEventType,
-    metricsTimestamp: sessionUsage.metricsTimestamp,
-    latestEventType: sessionUsage.latestEventType,
-    latestEventTimestamp: sessionUsage.latestEventTimestamp,
-    metricsStale: sessionUsage.metricsStale === true,
-    plan,
-    currency,
-    multiplierSet,
-    source: directPremiumRequests === undefined ? "model-breakdown" : "direct-premium-requests",
-    totalPremiumRequests,
-    includedPremiumRequests,
-    includedPremiumRequestsApplied: Math.min(totalPremiumRequests, includedPremiumRequests),
-    remainingPremiumRequestsBeforeSession,
-    billablePremiumRequests,
-    billableUsd,
-    displayBillable: billableUsd === null ? null : convertUsd(billableUsd, currency),
-    premiumRequestUnitUsd: PREMIUM_REQUEST_USD,
-    overageEquivalentUsd,
-    displayOverageEquivalent: convertUsd(overageEquivalentUsd, currency),
-    overagePremiumRequestsIfAllowanceExhausted: totalPremiumRequests,
     modelBreakdown
   };
 }
@@ -175,6 +139,25 @@ export function normalizeModelId(model) {
   const raw = String(model ?? "").trim();
   const lower = raw.toLowerCase();
   return modelAliases[lower] ?? lower.replace(/\s+/g, "-");
+}
+
+export function resolveKnownModelId(model, lookupTable) {
+  const modelId = normalizeModelId(model);
+  if (lookupTable?.[modelId] !== undefined) {
+    return modelId;
+  }
+
+  return Object.keys(lookupTable ?? {})
+    .filter((candidate) => hasModelPrefix(modelId, candidate))
+    .sort((left, right) => right.length - left.length)[0] ?? modelId;
+}
+
+function hasModelPrefix(modelId, candidate) {
+  if (!modelId.startsWith(candidate)) {
+    return false;
+  }
+  const nextChar = modelId.charAt(candidate.length);
+  return nextChar === "" || nextChar === "-" || nextChar === "(" || nextChar === "[";
 }
 
 export function normalizePlanId(plan) {
@@ -219,17 +202,58 @@ function normalizeModelUsage(sessionUsage) {
     cachedInputTokens: numberOrZero(item.cachedInputTokens ?? item.cachedTokens),
     cacheWriteTokens: numberOrZero(item.cacheWriteTokens),
     outputTokens: numberOrZero(item.outputTokens),
-    reasoningTokens: numberOrZero(item.reasoningTokens)
+    reasoningTokens: numberOrZero(item.reasoningTokens),
+    totalNanoAiu: readOptionalNumber(item.totalNanoAiu),
+    aiCredits: readOptionalNumber(item.aiCredits)
   }));
 }
 
-function readDirectPremiumRequests(sessionUsage, scenario) {
-  return readOptionalNumber(
-    scenario.premiumRequests
-      ?? sessionUsage.premiumRequests
-      ?? sessionUsage.totalPremiumRequests
-      ?? sessionUsage.currentSessionPremiumRequests
-  );
+function getModelCreditSource(modelBreakdown) {
+  if (modelBreakdown.length === 0) {
+    return {
+      method: "token-estimate",
+      source: "token-rate-estimate"
+    };
+  }
+
+  const aiuCount = modelBreakdown.filter((item) => item.creditCalculationMethod === "copilot-aiu").length;
+  if (aiuCount === modelBreakdown.length) {
+    return {
+      method: "copilot-aiu",
+      source: "copilot-cli-model-aiu"
+    };
+  }
+  if (aiuCount > 0) {
+    return {
+      method: "mixed",
+      source: "mixed-model-aiu-token-estimate"
+    };
+  }
+  return {
+    method: "token-estimate",
+    source: "token-rate-estimate"
+  };
+}
+
+function readDirectAiCredits(usage, source) {
+  const totalNanoAiu = readOptionalNumber(usage.totalNanoAiu);
+  if (totalNanoAiu !== undefined) {
+    return {
+      aiCredits: nanoAiuToAiCredits(totalNanoAiu),
+      source,
+      totalNanoAiu
+    };
+  }
+
+  const aiCredits = readOptionalNumber(usage.aiCredits);
+  if (aiCredits !== undefined) {
+    return {
+      aiCredits,
+      source: source === "copilot-cli-model-aiu" ? "model-ai-credits" : "session-ai-credits"
+    };
+  }
+
+  return undefined;
 }
 
 function readOptionalNumber(value) {
@@ -244,19 +268,40 @@ function readOptionalNumber(value) {
 }
 
 function getIncludedAiCreditAllotment(plan, scenario) {
-  if (scenario.promotionalAllowance && planAllowances.promotionalAiCredits[plan] !== undefined) {
-    const promotionalAiCredits = planAllowances.promotionalAiCredits[plan];
-    return {
-      baseAiCredits: promotionalAiCredits,
-      flexAiCredits: 0,
-      totalAiCredits: promotionalAiCredits
-    };
-  }
-  return planAiCreditAllotments[plan] ?? {
+  const baseAllotment = planAiCreditAllotments[plan] ?? {
     baseAiCredits: 0,
     flexAiCredits: 0,
     totalAiCredits: 0
   };
+  const promotionalAiCredits = planAllowances.promotionalAiCredits[plan] ?? 0;
+  if (isPromotionalAllowanceActive(scenario) && promotionalAiCredits > 0) {
+    return {
+      baseAiCredits: baseAllotment.baseAiCredits,
+      flexAiCredits: baseAllotment.flexAiCredits,
+      promotionalAiCredits,
+      totalAiCredits: baseAllotment.totalAiCredits + promotionalAiCredits
+    };
+  }
+  return baseAllotment;
+}
+
+function isPromotionalAllowanceActive(scenario) {
+  if (typeof scenario.promotionalAllowance === "boolean") {
+    return scenario.promotionalAllowance;
+  }
+
+  const currentTime = Date.parse(scenario.currentDate ?? new Date().toISOString());
+  return Number.isFinite(currentTime)
+    && currentTime >= Date.parse(promotionalAllowancePeriod.startsAt)
+    && currentTime < Date.parse(promotionalAllowancePeriod.endsBefore);
+}
+
+function calculateAllowanceUsagePercentage(usage, allowance) {
+  const allowanceValue = numberOrZero(allowance);
+  if (allowanceValue <= 0) {
+    return null;
+  }
+  return roundCost((numberOrZero(usage) / allowanceValue) * 100);
 }
 
 function costForTokens(tokens, perMillionUsd) {
@@ -271,6 +316,14 @@ function usdToAiCredits(usd) {
   return roundCost(usd / AI_CREDIT_USD);
 }
 
+function aiCreditsToUsd(aiCredits) {
+  return roundCost(numberOrZero(aiCredits) * AI_CREDIT_USD);
+}
+
+function nanoAiuToAiCredits(totalNanoAiu) {
+  return roundCost(numberOrZero(totalNanoAiu) / NANO_AI_UNITS_PER_AI_CREDIT);
+}
+
 function sum(items, selector) {
   return items.reduce((total, item) => total + selector(item), 0);
 }
@@ -283,4 +336,3 @@ function numberOrZero(value) {
 function roundCost(value) {
   return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }
-

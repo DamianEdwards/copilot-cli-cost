@@ -8,6 +8,7 @@ import { getAppCacheDirectory } from "../core/app-cache-dir.js";
 import { formatMoney, normalizeCurrency } from "../core/currency.js";
 import { readCachedUsdExchangeRate } from "../core/fx-rates.js";
 import { mergeStatusLinePayload, parseStatusLinePayload } from "../core/statusline-payload.js";
+import { resolveCurrentPlanInfo } from "../core/subscription.js";
 
 main();
 
@@ -22,22 +23,17 @@ function main() {
     const payload = parseStatusLinePayload(raw);
     const { sessionUsage } = mergeStatusLinePayload(payload);
     const currencyConfig = resolveCurrencyConfig();
-    const usageBased = tryCalculate(sessionUsage, "usage-based", currencyConfig);
-    const premiumRequests = tryCalculate(sessionUsage, "premium-requests", currencyConfig);
+    const planInfo = resolveStatusLinePlan();
+    const usageBased = tryCalculate(sessionUsage, currencyConfig, planInfo.plan);
     const aggregateUsageBased = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "usage-based", currencyConfig)
-      : null;
-    const aggregatePremiumRequests = sessionUsage.aggregateUsage
-      ? tryCalculate(sessionUsage.aggregateUsage, "premium-requests", currencyConfig)
+      ? tryCalculate(sessionUsage.aggregateUsage, currencyConfig, planInfo.plan)
       : null;
     const costLine = args.hideCost
       ? ""
-      : formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, resolveLocale());
+      : formatStatusLine(usageBased, sessionUsage, aggregateUsageBased, resolveLocale(), planInfo);
     const passthroughInput = JSON.stringify(buildEnrichedPayload(payload, {
-      aggregatePremiumRequests,
       aggregateUsageBased,
       costLine,
-      premiumRequests,
       sessionUsage,
       usageBased
     }));
@@ -100,41 +96,48 @@ function readStdin() {
   }
 }
 
-function tryCalculate(sessionUsage, billingModel, currencyConfig) {
+function tryCalculate(sessionUsage, currencyConfig, plan) {
   try {
     return calculateSessionCost(sessionUsage, {
-      billingModel,
-      plan: process.env.COPILOT_COST_PLAN ?? "pro",
+      plan,
       currency: currencyConfig.currency,
       exchangeRates: currencyConfig.exchangeRates,
       exchangeRateMetadata: currencyConfig.exchangeRateMetadata,
-      promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true",
-      remainingPremiumRequests: readNumber(process.env.COPILOT_COST_REMAINING_PREMIUM_REQUESTS),
+      promotionalAllowance: readOptionalBoolean(process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE),
       billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true"
     });
   } catch (error) {
-    logDebugError(`failed to calculate ${billingModel} statusline cost`, error);
+    logDebugError("failed to calculate statusline cost", error);
     return null;
   }
 }
 
-function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUsageBased, aggregatePremiumRequests, locale) {
+function resolveStatusLinePlan() {
+  try {
+    const resolved = resolveCurrentPlanInfo();
+    if (resolved.plan) {
+      return resolved;
+    }
+  } catch (error) {
+    logDebugError("failed to read current subscription plan", error);
+  }
+  return {
+    assumed: true,
+    plan: "pro",
+    source: "fallback"
+  };
+}
+
+function formatStatusLine(usageBased, sessionUsage, aggregateUsageBased, locale, planInfo) {
   const parts = [];
   const isResumed = sessionUsage.logicalSession?.isResumed === true;
   if (isResumed && aggregateUsageBased) {
-    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim("total")}`);
+    parts.push(`${green(`~${formatMoney(aggregateUsageBased.displayTotal, aggregateUsageBased.currency.code, locale)}`)} ${dim(`total${formatAllowanceShare(aggregateUsageBased, planInfo)}`)}`);
     if (usageBased) {
       parts.push(dim(`this ${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`));
     }
   } else if (usageBased) {
-    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr)`)}`);
-  }
-  if (isResumed && aggregatePremiumRequests) {
-    parts.push(yellow(`${aggregatePremiumRequests.totalPremiumRequests} PRU total`));
-  } else if (premiumRequests) {
-    parts.push(yellow(`${premiumRequests.totalPremiumRequests} PRU`));
-  } else if (sessionUsage.premiumRequests !== undefined) {
-    parts.push(yellow(`${sessionUsage.premiumRequests} PRU`));
+    parts.push(`${green(`~${formatMoney(usageBased.displayTotal, usageBased.currency.code, locale)}`)} ${dim(`(${round(usageBased.aiCredits)} cr${formatAllowanceShare(usageBased, planInfo)})`)}`);
   }
   if (isResumed) {
     parts.push(dim(`${sessionUsage.logicalSession.instanceCount} instances`));
@@ -146,16 +149,55 @@ function formatStatusLine(usageBased, premiumRequests, sessionUsage, aggregateUs
   return parts.length > 0 ? `${magenta("💸 Cost")} ${parts.join(dim(" · "))}` : "";
 }
 
-function buildEnrichedPayload(payload, { aggregatePremiumRequests, aggregateUsageBased, costLine, premiumRequests, sessionUsage, usageBased }) {
+function formatAllowanceShare(result, planInfo) {
+  const percentage = readPercentage(result?.allowanceUsagePercentage);
+  if (percentage === null) {
+    return "";
+  }
+  const plan = formatPlanLabel(result, planInfo);
+  return `, ${formatPercentage(percentage)}${plan}`;
+}
+
+function formatPlanLabel(result, planInfo) {
+  const plan = result?.plan;
+  if (!plan) {
+    return "";
+  }
+  return planInfo?.assumed === true && planInfo.plan === plan
+    ? ` assumed ${plan}`
+    : ` ${plan}`;
+}
+
+function readPercentage(value) {
+  const percentage = Number(value);
+  return Number.isFinite(percentage) && percentage >= 0 ? percentage : null;
+}
+
+function readOptionalBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return String(value).toLowerCase() === "true";
+}
+
+function formatPercentage(value) {
+  if (value > 0 && value < 0.1) {
+    return "<0.1%";
+  }
+  if (value < 10) {
+    return `${round(value)}%`;
+  }
+  return `${Math.round(value)}%`;
+}
+
+function buildEnrichedPayload(payload, { aggregateUsageBased, costLine, sessionUsage, usageBased }) {
   return {
     ...payload,
     copilot_cost: {
-      schema_version: 1,
+      schema_version: 2,
       status_line: costLine,
       aggregate_usage_based: aggregateUsageBased,
-      aggregate_premium_requests: aggregatePremiumRequests,
       usage_based: usageBased,
-      premium_requests: premiumRequests,
       session_usage: sessionUsage
     }
   };
@@ -328,10 +370,6 @@ function green(value) {
 
 function magenta(value) {
   return color("38;5;213", value);
-}
-
-function yellow(value) {
-  return color("38;5;214", value);
 }
 
 function logDebugError(message, error) {

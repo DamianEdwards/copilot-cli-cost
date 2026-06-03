@@ -6,11 +6,13 @@ import { formatMoney } from "../../../src/core/currency.js";
 import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
 import { listLiveSessions, readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../../../src/core/session-events.js";
+import { mapCopilotPlan, resolveConfiguredPlan, writeCurrentSubscriptionCache } from "../../../src/core/subscription.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
-import { formatPackageVersion } from "../../../src/core/version.js";
+import { formatPackageVersion, readPackageMetadata } from "../../../src/core/version.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
+const extensionVersion = String(readPackageMetadata().version ?? "unknown");
 let session;
 let currentSubscriptionPromise;
 
@@ -47,7 +49,6 @@ session = await joinSession({
       parameters: {
         type: "object",
         properties: {
-          billingModel: { type: "string", enum: ["usage-based", "premium-requests"] },
           currency: { type: "string", description: "Display currency code, default USD." },
           plan: { type: "string", description: "Plan id, e.g. pro, pro-plus, max, business, enterprise." },
           sessionId: { type: "string", description: "Session id to read." },
@@ -57,7 +58,6 @@ session = await joinSession({
       skipPermission: true,
       handler: async (args = {}) => {
         const data = await getCostData({
-          billingModel: args.billingModel,
           currency: args.currency,
           plan: args.plan,
           sessionId: args.sessionId,
@@ -67,6 +67,10 @@ session = await joinSession({
       }
     }
   ]
+});
+
+void getCurrentSubscription().catch((error) => {
+  void session.log(`Copilot Cost: unable to detect subscription for statusline: ${error.message}`, { level: "warning" });
 });
 
 async function handleCostCommand(context) {
@@ -89,6 +93,11 @@ async function handleCostCommand(context) {
   }
 
   try {
+    if (verb === "update") {
+      await handleUpdateCommand();
+      return;
+    }
+
     const parsed = parseCostArgs(tokens);
     const data = await getCostData(parsed);
     await session.log(formatCostCommandOutput(data));
@@ -119,24 +128,34 @@ async function handlePanelCommand(action = "on") {
   await session.log("Usage: /cost panel on|off|refresh", { level: "warning" });
 }
 
+async function handleUpdateCommand() {
+  const subscription = await refreshCurrentSubscription();
+  const statuslineRefresh = await refreshStatusLineSafe();
+  const plan = subscription.plan ? `plan ${subscription.plan}` : "plan unavailable";
+  const source = subscription.source ? ` from ${subscription.source}` : "";
+  const statuslineNote = statuslineRefresh.refreshed
+    ? " Statusline refresh requested."
+    : " Statusline will update on its next refresh.";
+  await session.log(`Copilot Cost cache updated: ${plan}${source}.${statuslineNote}`);
+}
+
 function formatCostHelp() {
   return [
     "Copilot Cost usage",
     "",
     "/cost",
+    "/cost version",
+    "/cost update",
     "/cost panel on|off|refresh",
     "/cost session <session-id>",
     "/cost live-session <session-id>",
     "/cost --plan pro|pro-plus|max|business|enterprise",
-    "/cost --billing-model usage-based|premium-requests",
-    "/cost --currency USD",
-    "/cost version"
+    "/cost --currency USD"
   ].join("\n");
 }
 
 function parseCostArgs(tokens) {
   const parsed = {
-    billingModel: undefined,
     currency: undefined,
     plan: undefined,
     sessionId: undefined,
@@ -156,9 +175,6 @@ function parseCostArgs(tokens) {
       case "session":
         parsed.source = "completed";
         parsed.sessionId = readRequiredToken(tokens, ++index, token);
-        break;
-      case "--billing-model":
-        parsed.billingModel = readRequiredToken(tokens, ++index, token);
         break;
       case "--currency":
         parsed.currency = readRequiredToken(tokens, ++index, token);
@@ -198,6 +214,7 @@ async function listPanelSessions() {
 
   return {
     currentSessionId,
+    extensionVersion,
     generatedAt: new Date().toISOString(),
     sessions: [current, ...liveSessions, ...completedSessions]
   };
@@ -223,7 +240,6 @@ function readSessionWorkspaceMetadataSafe(sessionId) {
 }
 
 async function getCostData({
-  billingModel,
   currency = process.env.COPILOT_COST_CURRENCY ?? "USD",
   plan,
   sessionId,
@@ -234,68 +250,65 @@ async function getCostData({
   const resolvedPlan = plan ?? currentSubscription.plan ?? "pro";
   const exchangeRate = await resolveExchangeRate(currency);
   const scenario = {
-    billingModel,
     currency,
     exchangeRateMetadata: exchangeRate.metadata,
     exchangeRates: exchangeRate.exchangeRates,
     billReasoningTokens: process.env.COPILOT_COST_BILL_REASONING_TOKENS === "true",
     plan: resolvedPlan,
-    promotionalAllowance: process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE === "true"
+    promotionalAllowance: readOptionalBoolean(process.env.COPILOT_COST_PROMOTIONAL_ALLOWANCE)
   };
 
   const usageBased = tryCalculate(sessionUsage, {
     ...scenario,
     billingModel: "usage-based"
   });
-  const premiumRequests = tryCalculate(sessionUsage, {
-    ...scenario,
-    billingModel: "premium-requests"
-  });
   const aggregateUsage = sessionUsage.aggregateUsage;
   const aggregateUsageBased = aggregateUsage ? tryCalculate(aggregateUsage, {
     ...scenario,
     billingModel: "usage-based"
   }) : undefined;
-  const aggregatePremiumRequests = aggregateUsage ? tryCalculate(aggregateUsage, {
-    ...scenario,
-    billingModel: "premium-requests"
-  }) : undefined;
 
   return {
-    aggregatePremiumRequests,
     aggregateUsageBased,
     generatedAt: new Date().toISOString(),
     currentSubscription,
     exchangeRate: exchangeRate.rateInfo,
+    extensionVersion,
     repoRoot,
-    requestedBillingModel: billingModel,
     sessionUsage,
     source,
     usageBased,
-    premiumRequests,
-    selected: billingModel === "premium-requests" ? premiumRequests : usageBased
+    selected: usageBased
   };
 }
 
 async function getCurrentSubscription() {
   const subscription = await (currentSubscriptionPromise ??= readCurrentSubscription());
-  const configuredPlan = process.env.COPILOT_COST_PLAN ? mapCopilotPlan(process.env.COPILOT_COST_PLAN) : undefined;
+  const configuredPlan = resolveConfiguredPlan();
+  let resolvedSubscription;
   if (!configuredPlan) {
-    return subscription;
+    resolvedSubscription = subscription;
+  } else if (subscription.plan === configuredPlan) {
+    resolvedSubscription = subscription;
+  } else {
+    resolvedSubscription = {
+      ...subscription,
+      plan: configuredPlan,
+      rawPlan: process.env.COPILOT_COST_PLAN,
+      source: "COPILOT_COST_PLAN",
+      detectedPlan: subscription.plan,
+      detectedRawPlan: subscription.rawPlan,
+      detectedSource: subscription.source,
+      statusMessage: subscription.statusMessage
+    };
   }
-  if (subscription.plan === configuredPlan) {
-    return subscription;
-  }
-  return {
-    ...subscription,
-    plan: configuredPlan,
-    rawPlan: process.env.COPILOT_COST_PLAN,
-    source: "COPILOT_COST_PLAN",
-    detectedPlan: subscription.plan,
-    detectedRawPlan: subscription.rawPlan,
-    detectedSource: subscription.source,
-    statusMessage: subscription.statusMessage
-  };
+  writeCurrentSubscriptionCacheSafe(resolvedSubscription);
+  return resolvedSubscription;
+}
+
+async function refreshCurrentSubscription() {
+  currentSubscriptionPromise = readCurrentSubscription();
+  return getCurrentSubscription();
 }
 
 async function readCurrentSubscription() {
@@ -320,33 +333,32 @@ async function readCurrentSubscription() {
   }
 }
 
-function mapCopilotPlan(plan) {
-  const normalized = String(plan ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-");
-  if (!normalized) {
-    return undefined;
+async function refreshStatusLineSafe() {
+  const candidates = [
+    session.rpc?.statusLine,
+    session.rpc?.statusline,
+    session.rpc?.statusBar,
+    session.rpc?.statusbar
+  ].filter((candidate) => typeof candidate?.refresh === "function");
+
+  for (const candidate of candidates) {
+    try {
+      await candidate.refresh();
+      return { refreshed: true };
+    } catch (error) {
+      await session.log(`Copilot Cost: statusline refresh failed: ${error.message}`, { level: "warning" });
+    }
   }
-  if (normalized.includes("enterprise")) {
-    return "enterprise";
+
+  return { refreshed: false };
+}
+
+function writeCurrentSubscriptionCacheSafe(subscription) {
+  try {
+    writeCurrentSubscriptionCache(subscription);
+  } catch (error) {
+    void session.log(`Copilot Cost: unable to cache subscription for statusline: ${error.message}`, { level: "warning" });
   }
-  if (normalized.includes("business")) {
-    return "business";
-  }
-  if (normalized.includes("pro+") || normalized.includes("pro-plus") || normalized.includes("proplus")) {
-    return "pro-plus";
-  }
-  if (normalized.includes("max")) {
-    return "max";
-  }
-  if (normalized.includes("student")) {
-    return "student";
-  }
-  if (normalized.includes("free")) {
-    return "free";
-  }
-  if (normalized.includes("pro")) {
-    return "pro";
-  }
-  return normalized;
 }
 
 function openExternal(url) {
@@ -437,7 +449,7 @@ function usageWeight(sessionUsage) {
       + Number(item.cacheWriteTokens ?? 0)
       + Number(item.outputTokens ?? 0)
       + Number(item.reasoningTokens ?? 0),
-    Number(sessionUsage?.premiumRequests ?? 0)
+    0
   );
 }
 
@@ -469,23 +481,13 @@ function formatCostCommandOutput(data) {
   }
 
   if (data.usageBased?.error) {
-    lines.push(`Usage-based: unavailable (${data.usageBased.error})`);
+    lines.push(`Cost: unavailable (${data.usageBased.error})`);
   } else if (data.usageBased) {
     lines.push(`Usage-based estimate: ${formatMoney(data.usageBased.totalUsd, "USD")} (${data.usageBased.aiCredits} AI credits)`);
     if (isResumed && data.aggregateUsageBased && !data.aggregateUsageBased.error) {
       lines.push(`Logical session usage total: ${formatMoney(data.aggregateUsageBased.totalUsd, "USD")} (${data.aggregateUsageBased.aiCredits} AI credits)`);
     }
     lines.push(`Plan allowance: ${formatAiCreditAllotment(data.usageBased)} for ${data.usageBased.plan}`);
-  }
-
-  if (data.premiumRequests?.error) {
-    lines.push(`Premium requests: unavailable (${data.premiumRequests.error})`);
-  } else if (data.premiumRequests) {
-    lines.push(`Premium requests: ${data.premiumRequests.totalPremiumRequests} PRU (${formatMoney(data.premiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
-    if (isResumed && data.aggregatePremiumRequests && !data.aggregatePremiumRequests.error) {
-      lines.push(`Logical session premium requests: ${data.aggregatePremiumRequests.totalPremiumRequests} PRU (${formatMoney(data.aggregatePremiumRequests.overageEquivalentUsd, "USD")} overage-equivalent)`);
-    }
-    lines.push(`Included monthly PRUs: ${data.premiumRequests.includedPremiumRequests} for ${data.premiumRequests.plan}`);
   }
 
   lines.push("");
@@ -498,13 +500,31 @@ function formatAiCreditAllotment(usageBased) {
   const allotment = usageBased.includedAiCreditAllotment ?? {
     baseAiCredits: usageBased.includedAiCredits ?? 0,
     flexAiCredits: 0,
+    promotionalAiCredits: 0,
     totalAiCredits: usageBased.includedAiCredits ?? 0
   };
-  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
-  if (flexAiCredits <= 0) {
+  const components = formatAiCreditAllotmentComponents(allotment);
+  if (components.length <= 0) {
     return `${allotment.totalAiCredits} AI credits`;
   }
-  return `${allotment.totalAiCredits} AI credits (${allotment.baseAiCredits} base + ${flexAiCredits} flex)`;
+  return `${allotment.totalAiCredits} AI credits (${components.join(" + ")})`;
+}
+
+function formatAiCreditAllotmentComponents(allotment) {
+  const components = [];
+  const baseAiCredits = Number(allotment.baseAiCredits ?? 0);
+  const flexAiCredits = Number(allotment.flexAiCredits ?? 0);
+  const promotionalAiCredits = Number(allotment.promotionalAiCredits ?? 0);
+  if (baseAiCredits > 0 && (flexAiCredits > 0 || promotionalAiCredits > 0)) {
+    components.push(`${allotment.baseAiCredits} base`);
+  }
+  if (flexAiCredits > 0) {
+    components.push(`${flexAiCredits} flex`);
+  }
+  if (promotionalAiCredits > 0) {
+    components.push(`${promotionalAiCredits} promotional`);
+  }
+  return components;
 }
 
 async function resolveExchangeRate(currency) {
@@ -553,6 +573,13 @@ function readOptionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readOptionalBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return String(value).toLowerCase() === "true";
 }
 
 function readRequiredToken(tokens, index, flag) {

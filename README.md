@@ -2,10 +2,7 @@
 
 Copilot CLI Cost adds estimated session-cost reporting to GitHub Copilot CLI.
 
-It estimates costs across both Copilot billing models:
-
-- Premium request units
-- Usage-based billing with GitHub AI Credits
+It estimates usage-based billing with GitHub AI Credits.
 
 The calculator stores canonical cost in USD and converts to a selected display currency with cached exchange rates from Frankfurter or an explicit exchange-rate override.
 
@@ -38,7 +35,7 @@ macOS/Linux (`install.sh`):
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run a local checkout instead:
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run the installer script from a checkout instead:
 
 ```powershell
 .\install.ps1
@@ -50,7 +47,7 @@ The remote scripts run in isolation and fetch their helper from the same raw-con
 
 The installer:
 
-- Runs `copilot plugin install DamianEdwards/copilot-cli-cost` if the plugin is not already installed.
+- On Copilot CLI 1.0.56-0 or newer, registers this repository's marketplace and installs or updates `copilot-cli-cost@copilot-cli-cost-marketplace`. Older Copilot CLI versions use the direct repository install format.
 - Downloads the installer helper from the raw-content base URL.
 - Installs the user-scoped extension shim for `/cost` and the panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
@@ -62,20 +59,26 @@ Installer options:
 
 | Option | Description |
 | --- | --- |
+| `--plugin-source <source>` | Use a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this must be a marketplace source. |
+| `--marketplace-name <name>` | Use a custom marketplace name when the marketplace metadata differs from `copilot-cli-cost-marketplace`. |
+| `--plugin-name <name>` | Use a custom plugin name when the marketplace metadata differs from `copilot-cli-cost`. |
 | `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
 
-Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
+Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this source is registered as a plugin marketplace; set `COPILOT_COST_MARKETPLACE_NAME` / `--marketplace-name` and `COPILOT_COST_PLUGIN_NAME` / `--plugin-name` if your fork changes those marketplace identifiers. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
+
+When you run `copilot` inside this repository, Copilot CLI's extension resolver prefers the repo-local `.github/extensions/copilot-cli-cost` extension over the user-installed extension. The user-scoped shim intentionally stays pointed at the installed plugin copy for sessions outside the repository.
 
 ### Manual install
 
 The scripts perform these steps. To do them manually, first install the plugin:
 
 ```shell
-copilot plugin install DamianEdwards/copilot-cli-cost
+copilot plugin marketplace add DamianEdwards/copilot-cli-cost # if not already registered
+copilot plugin install copilot-cli-cost@copilot-cli-cost-marketplace
 ```
 
 Then run the extension shim installer from the installed plugin.
@@ -103,12 +106,6 @@ if [ -z "$installer" ]; then
   exit 1
 fi
 node "$installer"
-```
-
-When you're developing from a local checkout and want the user-level extension pinned to that checkout instead of the cached installed-plugin copy, run the installer from the checkout itself:
-
-```powershell
-node .\scripts\install-extension-shim.mjs
 ```
 
 Configure `~/.copilot/settings.json`. Do not put `statusLine` in `config.json`; that file is managed by Copilot CLI and user settings may be moved or removed during startup. Use your machine's statusline launcher path:
@@ -146,27 +143,32 @@ macOS/Linux:
 The statusline bridge prints a compact segment:
 
 ```text
-💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out
+💸 Cost ~$0.3059 (30.6 cr, 2% pro) · last 42K in/3K out
 ```
 
-The generated statusline launcher is workspace-aware. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
+When the SDK extension can detect your current Copilot subscription, the statusline uses that cached plan for allowance percentages. `COPILOT_COST_PLAN` can still override the plan explicitly. If neither is available, the statusline falls back to `assumed pro` so the percentage is not presented as a detected plan.
+
+The generated statusline launcher is workspace-aware because statusline settings point at a fixed command and do not use the extension resolver. When Copilot sends a statusline payload with `workspace.current_dir` or `cwd` inside a `copilot-cli-cost` checkout or worktree, the launcher runs that checkout's `src/cli/statusline.js`; otherwise it falls back to the installed plugin copy. Set `COPILOT_COST_STATUSLINE_DISABLE_WORKSPACE=true` to always use the installed copy.
 
 ## Use
 
 ```text
 /cost
 /cost help
+/cost version
+/cost update
 /cost panel on
 /cost panel off
 /cost panel refresh
 /cost session <session-id>
 /cost live-session <session-id>
 /cost --plan pro|pro-plus|max|business|enterprise
-/cost --billing-model usage-based|premium-requests
 /cost --currency USD|EUR|GBP|CAD|AUD|JPY|CHF
 ```
 
 `/cost` is handled by extension JavaScript. It does not ask the model to calculate the result.
+
+Use `/cost update` to force the extension to re-detect your current Copilot subscription and rewrite the shared cache used by the statusline. If the host exposes a statusline refresh hook, the command also requests an immediate refresh; otherwise the updated plan appears on the next normal statusline refresh.
 
 The panel opens a native window:
 
@@ -177,10 +179,11 @@ The panel opens a native window:
 The panel shows:
 
 - Usage-based estimate
-- Premium-request estimate
+- Percentage of the selected plan's allowance used by the session
 - Searchable session picker for current, cached live, and completed sessions
 - Selected session ID and data source
 - Current or assumed subscription
+- Loaded extension version
 - What-if subscription selector
 - Display currency selector
 - Per-model token bucket breakdown
@@ -197,7 +200,7 @@ await session.rpc.usage.getMetrics()
 That response includes:
 
 - Per-model request counts
-- Premium request cost
+- Copilot-reported AI credit usage (`totalNanoAiu`) when available
 - Input, cached input, cache write, output, and reasoning token buckets
 - Active model
 - Last-call input/output token counts
@@ -219,9 +222,11 @@ Windows: %USERPROFILE%\.copilot\session-state\<session-id>\events.jsonl
 macOS/Linux: ~/.copilot/session-state/<session-id>/events.jsonl
 ```
 
-The parser reads the latest metrics event and extracts per-model token buckets plus total premium request units.
+The parser reads the latest metrics event and extracts Copilot-reported AI credit usage and per-model token buckets.
 
-When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances. If premium request counters look cumulative across a resume, the aggregate uses the latest cumulative value instead of summing and double-counting it.
+For usage-based billing, Copilot-reported AI credits are preferred because they match the CLI's own **AI Credits** counter. Token-rate estimates are retained as a fallback when Copilot does not provide AI credit totals, and the panel labels which method was used.
+
+When statusline payloads include `transcript_path`, live snapshots are also grouped into a logical session. This keeps each resumed Copilot CLI instance as its own snapshot while letting `/cost`, the statusline segment, and the panel show the total cost across resumed instances.
 
 ## Statusline passthrough
 
@@ -246,27 +251,19 @@ The enriched payload includes:
 ```jsonc
 {
   "copilot_cost": {
-    "schema_version": 1,
-    "status_line": "💸 Cost ~$0.3059 (30.6 cr) · 7.5 PRU · last 42K in/3K out",
+    "schema_version": 2,
+    "status_line": "💸 Cost ~$0.3059 (30.6 cr, 2% pro) · last 42K in/3K out",
     "aggregate_usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
-    },
-    "aggregate_premium_requests": {
-      "billingModel": "premium-requests",
-      "totalPremiumRequests": 7.5,
-      "overageEquivalentUsd": 0.3
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     },
     "usage_based": {
       "billingModel": "usage-based",
       "totalUsd": 0.305869,
-      "aiCredits": 30.5869
-    },
-    "premium_requests": {
-      "billingModel": "premium-requests",
-      "totalPremiumRequests": 7.5,
-      "overageEquivalentUsd": 0.3
+      "aiCredits": 30.5869,
+      "creditCalculationSource": "copilot-cli-session-aiu"
     }
   }
 }
@@ -311,7 +308,6 @@ PowerShell:
 ```powershell
 $env:COPILOT_COST_PLAN = "enterprise"
 $env:COPILOT_COST_CURRENCY = "EUR"
-$env:COPILOT_COST_PROMOTIONAL_ALLOWANCE = "true"
 copilot
 ```
 
@@ -320,7 +316,6 @@ macOS/Linux:
 ```sh
 export COPILOT_COST_PLAN=enterprise
 export COPILOT_COST_CURRENCY=EUR
-export COPILOT_COST_PROMOTIONAL_ALLOWANCE=true
 copilot
 ```
 
@@ -331,7 +326,8 @@ copilot
 | `COPILOT_COST_EXCHANGE_RATE` | USD-to-display-currency exchange rate override for `COPILOT_COST_CURRENCY`. |
 | `COPILOT_COST_FX_<CODE>` | USD-to-currency exchange rate override for a specific currency, for example `COPILOT_COST_FX_EUR=0.9`. |
 | `COPILOT_COST_FX_CACHE` | Exchange-rate cache folder. Defaults to `%LOCALAPPDATA%\copilot-cli-cost\fx-rates` on Windows, `~/Library/Caches/copilot-cli-cost/fx-rates` on macOS, or `${XDG_CACHE_HOME:-~/.cache}/copilot-cli-cost/fx-rates` on Linux. |
-| `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Use promotional Business/Enterprise AI Credit allowances. |
+| `COPILOT_COST_SUBSCRIPTION_CACHE` | Current subscription cache file used by the statusline. Defaults to `current-subscription.json` under the platform cache root. |
+| `COPILOT_COST_PROMOTIONAL_ALLOWANCE` | Override promotional Business/Enterprise AI Credit allowances. During the June 1-September 1, 2026 transition this defaults on; set `false` to disable or `true` to force on. |
 | `COPILOT_COST_BILL_REASONING_TOKENS` | Set to `true` to include reasoning tokens as output-priced cost. By default they are shown as informational only. |
 
 The live session cache can be overridden with `COPILOT_COST_LIVE_STORE`. By default it uses the same platform cache root as `COPILOT_COST_FX_CACHE`.
@@ -356,8 +352,6 @@ Examples:
 
 ```powershell
 npm run cost -- --sample
-npm run cost -- --sample --billing-model premium-requests --plan pro-plus
-npm run cost -- --premium-requests 12.5 --plan pro --remaining-premium-requests 10
 npm run cost -- --session <session-id> --plan pro
 npm run cost -- --live --plan max
 npm run cost -- --sample --currency EUR
@@ -397,12 +391,12 @@ cacheWriteUsd       = cacheWriteTokens    / 1,000,000 * cacheWritePerMillionUsd
 outputUsd           = outputTokens        / 1,000,000 * outputPerMillionUsd
 reasoningUsd        = 0 unless COPILOT_COST_BILL_REASONING_TOKENS=true
 aiCredits           = totalUsd / 0.01
-includedAiCredits   = baseAiCredits + current flexAiCredits
+includedAiCredits   = baseAiCredits + current flexAiCredits + current promotionalAiCredits
 ```
 
-Premium-request billing uses Copilot-reported premium request units when present. If only model request counts are available, it applies the configured model multiplier table.
+For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output.
 
-For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output. Copilot Max is usage-based only in this calculator; premium-request support remains for existing request-based plans.
+During GitHub's June 1-September 1, 2026 usage-based billing transition, existing Copilot Business and Enterprise customers receive promotional included credits. The calculator applies those promotional credits by default during that window and preserves them as a separate `promotionalAiCredits` component, for example `7,000 included (3,900 base + 3,100 promotional)` for Copilot Enterprise.
 
 Non-USD currency values are display estimates. USD remains canonical because GitHub model rates and AI Credits are documented in USD. Non-USD `/cost` and panel requests fetch USD exchange rates from [Frankfurter](https://www.frankfurter.dev/) and cache them for reuse; explicit environment or CLI exchange-rate overrides take precedence.
 

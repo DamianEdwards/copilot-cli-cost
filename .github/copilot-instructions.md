@@ -15,14 +15,14 @@
 This is a Node.js Copilot CLI plugin and SDK extension for estimating Copilot CLI session cost. The central flow is:
 
 1. Collect or load usage data from one of several sources.
-2. Normalize it into the canonical `sessionUsage` shape with `sessionId`, optional metadata, `premiumRequests`, and `modelUsage` token buckets.
+2. Normalize it into the canonical `sessionUsage` shape with `sessionId`, optional metadata, and `modelUsage` token buckets.
 3. Pass it to `calculateSessionCost()` in `src/core/calculate.js`.
 4. Render the result through the standalone CLI, `/cost` extension command, native panel, statusline bridge, or SDK tool.
 
 The calculation core is in `src/core/`:
 
-- `calculate.js` computes both billing models. Usage-based billing multiplies token buckets by per-1M-token rates; premium-request billing prefers an already-multiplied PRU total when present and only falls back to local model multipliers when necessary.
-- `rates.js` is the single source for model rates, model aliases, premium-request multiplier sets, plan IDs, and plan allowances. Re-check GitHub billing docs before changing these tables.
+- `calculate.js` computes usage-based billing by multiplying token buckets by per-1M-token rates.
+- `rates.js` is the single source for model rates, model aliases, plan IDs, and plan allowances. Re-check GitHub billing docs before changing these tables.
 - `currency.js`, `fx-rates.js`, and `app-cache-dir.js` keep USD canonical and add display-currency estimates from explicit exchange rates, environment overrides, cached Frankfurter rates, or fresh Frankfurter requests.
 - `usage-metrics.js`, `session-events.js`, and `statusline-payload.js` adapt external Copilot data shapes into `sessionUsage`.
 - `live-session-store.js` persists live snapshots in the platform cache folder so independent surfaces can share the same normalized data.
@@ -35,7 +35,7 @@ There are three presentation/integration layers:
 
 The native panel lives under `.github/extensions/copilot-cli-cost/`. `extension.mjs` bootstraps dependencies before importing `main.mjs`; `lib/copilot-webview.js` starts a local HTTP/WebSocket bridge and launches `@webviewjs/webview`; `content/` contains the browser UI.
 
-Plugin installation has two parts: `plugin.json` exposes plugin metadata and skills from `skills/`, while `scripts/install-extension-shim.mjs` installs a user-scoped SDK extension shim under `~/.copilot/extensions/copilot-cli-cost/extension.mjs` that imports the installed plugin's `.github/extensions/copilot-cli-cost/extension.mjs`.
+Plugin installation has two parts: `plugin.json` exposes plugin metadata and skills from `skills/`, while `scripts/install-extension-shim.mjs` installs a user-scoped SDK extension shim under `~/.copilot/extensions/copilot-cli-cost/extension.mjs` that imports the installed plugin's `.github/extensions/copilot-cli-cost/extension.mjs`. Do not pin this shim to a source checkout; Copilot CLI handles repo-local extension precedence. The statusline launcher remains workspace-aware because `statusLine.command` is a fixed settings command and does not use the extension resolver.
 
 ## Key conventions
 
@@ -43,7 +43,6 @@ Plugin installation has two parts: `plugin.json` exposes plugin metadata and ski
 - Preserve the canonical `sessionUsage` fields when adding data sources: `modelUsage` entries should use `model`, `requests`, `inputTokens`, `cachedInputTokens`, `cacheWriteTokens`, `outputTokens`, and `reasoningTokens`.
 - Treat USD as canonical. Non-USD values are display estimates; pass exchange-rate metadata through calculation output so UI surfaces can label the source accurately.
 - Reasoning tokens are informational by default; only bill them as output-priced when `billReasoningTokens` or `COPILOT_COST_BILL_REASONING_TOKENS=true` opts in.
-- For premium-request billing, do not double-apply multipliers. If Copilot supplies `premiumRequests`, `totalPremiumRequests`, or `currentSessionPremiumRequests`, use that direct value.
 - Statusline payloads contain cumulative token totals, not historical per-model buckets. `mergeStatusLinePayload()` attributes deltas to the active model and resets when counters decrease.
 - Keep the statusline wrappers paired across platforms: Windows uses `scripts/statusline.cmd`; macOS/Linux use `scripts/statusline.sh`, which should stay LF-normalized through `.gitattributes`.
 - Use `getAppCacheDirectory()` / `getAppCacheSubdirectory()` for new cache files. Respect existing env overrides such as `COPILOT_COST_LIVE_STORE`, `COPILOT_COST_FX_CACHE`, `XDG_CACHE_HOME`, and Windows `%LOCALAPPDATA%`.
