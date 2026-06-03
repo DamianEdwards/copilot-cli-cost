@@ -1,7 +1,7 @@
 {
   "name": "copilot-cli-cost",
   "description": "Estimate Copilot CLI session cost with usage-based billing.",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "author": {
     "name": "Damian Edwards"
   },
