@@ -13,6 +13,7 @@ import { getLiveSessionStoreDirectory, listLiveSessions, readLiveSession, writeL
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../src/core/session-events.js";
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
+import { formatPackageVersion } from "../src/core/version.js";
 
 const sessionUsage = {
   sessionId: "test-session",
@@ -34,6 +35,16 @@ const sessionUsage = {
     }
   ]
 };
+
+test("prints the package version", () => {
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "..", "src", "cli", "cost.js"), "--version"], {
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout.trim(), formatPackageVersion());
+  assert.equal(result.stderr, "");
+});
 
 test("calculates usage-based billing from token buckets", () => {
   const result = calculateSessionCost(sessionUsage, {
@@ -1161,4 +1172,3 @@ test("statusline launcher prefers copilot-cli-cost checkout from payload cwd", (
 function readFixture(name) {
   return JSON.parse(fs.readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 }
-

@@ -7,6 +7,7 @@ import { getUsdExchangeRate } from "../../../src/core/fx-rates.js";
 import { listLiveSessions, readLatestLiveSession, readLiveSession, writeLiveSession } from "../../../src/core/live-session-store.js";
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../../../src/core/session-events.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
+import { formatPackageVersion } from "../../../src/core/version.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -77,6 +78,11 @@ async function handleCostCommand(context) {
     return;
   }
 
+  if (verb === "version" || verb === "-v" || verb === "--version") {
+    await session.log(formatPackageVersion());
+    return;
+  }
+
   if (verb === "panel") {
     await handlePanelCommand(subject, tokens.slice(2));
     return;
@@ -123,7 +129,8 @@ function formatCostHelp() {
     "/cost live-session <session-id>",
     "/cost --plan pro|pro-plus|max|business|enterprise",
     "/cost --billing-model usage-based|premium-requests",
-    "/cost --currency USD"
+    "/cost --currency USD",
+    "/cost version"
   ].join("\n");
 }
 
