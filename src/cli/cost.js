@@ -9,6 +9,7 @@ import { getUsdExchangeRate } from "../core/fx-rates.js";
 import { readLatestLiveSession, readLiveSession } from "../core/live-session-store.js";
 import { readSessionUsageFromEvents } from "../core/session-events.js";
 import { parseStatusLinePayload, statusLinePayloadToSessionUsage } from "../core/statusline-payload.js";
+import { formatPackageVersion } from "../core/version.js";
 
 const rootDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -19,6 +20,11 @@ async function main() {
     const args = parseArgs(process.argv.slice(2));
     if (args.help) {
       printHelp();
+      return;
+    }
+
+    if (args.version) {
+      console.log(formatPackageVersion());
       return;
     }
 
@@ -164,6 +170,10 @@ function parseArgs(argv) {
       case "-h":
         args.help = true;
         break;
+      case "--version":
+      case "-v":
+        args.version = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -248,6 +258,7 @@ Options:
   --promotional-allowance          Force Business/Enterprise promotional UBB allowances on
   --no-promotional-allowance       Force Business/Enterprise promotional UBB allowances off
   --json                           Print machine-readable JSON
+  --version                        Show version
   --help                           Show help
 `);
 }

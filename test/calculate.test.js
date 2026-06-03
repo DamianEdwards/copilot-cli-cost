@@ -14,6 +14,7 @@ import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readS
 import { mergeStatusLinePayload, statusLinePayloadToSessionUsage } from "../src/core/statusline-payload.js";
 import { writeCurrentSubscriptionCache } from "../src/core/subscription.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../src/core/usage-metrics.js";
+import { formatPackageVersion } from "../src/core/version.js";
 
 const sessionUsage = {
   sessionId: "test-session",
@@ -35,6 +36,16 @@ const sessionUsage = {
     }
   ]
 };
+
+test("prints the package version", () => {
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "..", "src", "cli", "cost.js"), "--version"], {
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout.trim(), formatPackageVersion());
+  assert.equal(result.stderr, "");
+});
 
 test("calculates usage-based billing from token buckets", () => {
   const result = calculateSessionCost(sessionUsage, {

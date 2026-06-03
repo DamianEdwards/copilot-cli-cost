@@ -1,6 +1,5 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { calculateSessionCost } from "../../../src/core/calculate.js";
 import { formatMoney } from "../../../src/core/currency.js";
@@ -9,17 +8,13 @@ import { listLiveSessions, readLatestLiveSession, readLiveSession, writeLiveSess
 import { listCompletedSessionSummaries, readRichestSessionUsageFromEvents, readSessionUsageFromEvents, readSessionWorkspaceMetadata } from "../../../src/core/session-events.js";
 import { mapCopilotPlan, resolveConfiguredPlan, writeCurrentSubscriptionCache } from "../../../src/core/subscription.js";
 import { mergeResumedSessionUsage, usageMetricsToSessionUsage } from "../../../src/core/usage-metrics.js";
+import { formatPackageVersion, readPackageMetadata } from "../../../src/core/version.js";
 import { CopilotWebview } from "./lib/copilot-webview.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
-const extensionVersion = readExtensionVersion();
+const extensionVersion = String(readPackageMetadata().version ?? "unknown");
 let session;
 let currentSubscriptionPromise;
-
-function readExtensionVersion() {
-  const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
-  return String(packageJson.version ?? "unknown");
-}
 
 const webview = new CopilotWebview({
   callbacks: {
@@ -87,17 +82,17 @@ async function handleCostCommand(context) {
     return;
   }
 
+  if (verb === "version" || verb === "-v" || verb === "--version") {
+    await session.log(formatPackageVersion());
+    return;
+  }
+
   if (verb === "panel") {
     await handlePanelCommand(subject, tokens.slice(2));
     return;
   }
 
   try {
-    if (verb === "version") {
-      await session.log(`Copilot Cost extension version ${extensionVersion}`);
-      return;
-    }
-
     if (verb === "update") {
       await handleUpdateCommand();
       return;
