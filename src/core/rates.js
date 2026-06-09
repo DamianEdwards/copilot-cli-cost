@@ -37,15 +37,22 @@ export const promotionalAllowancePeriod = Object.freeze({
 });
 
 export const usageBasedRates = Object.freeze({
-  "gpt-4.1": rate({ input: 2, cachedInput: 0.5, output: 8 }),
   "gpt-5-mini": rate({ input: 0.25, cachedInput: 0.025, output: 2 }),
-  "gpt-5.2": rate({ input: 1.75, cachedInput: 0.175, output: 14 }),
-  "gpt-5.2-codex": rate({ input: 1.75, cachedInput: 0.175, output: 14 }),
   "gpt-5.3-codex": rate({ input: 1.75, cachedInput: 0.175, output: 14 }),
-  "gpt-5.4": rate({ input: 2.5, cachedInput: 0.25, output: 15 }),
+  "gpt-5.4": rate({
+    input: 2.5,
+    cachedInput: 0.25,
+    output: 15,
+    longContext: { thresholdInputTokens: 272_000, input: 5, cachedInput: 0.5, output: 22.5 }
+  }),
   "gpt-5.4-mini": rate({ input: 0.75, cachedInput: 0.075, output: 4.5 }),
   "gpt-5.4-nano": rate({ input: 0.2, cachedInput: 0.02, output: 1.25 }),
-  "gpt-5.5": rate({ input: 5, cachedInput: 0.5, output: 30 }),
+  "gpt-5.5": rate({
+    input: 5,
+    cachedInput: 0.5,
+    output: 30,
+    longContext: { thresholdInputTokens: 272_000, input: 10, cachedInput: 1, output: 45 }
+  }),
   "claude-haiku-4.5": rate({ input: 1, cachedInput: 0.1, cacheWrite: 1.25, output: 5 }),
   "claude-sonnet-4": rate({ input: 3, cachedInput: 0.3, cacheWrite: 3.75, output: 15 }),
   "claude-sonnet-4.5": rate({ input: 3, cachedInput: 0.3, cacheWrite: 3.75, output: 15 }),
@@ -54,12 +61,18 @@ export const usageBasedRates = Object.freeze({
   "claude-opus-4.6": rate({ input: 5, cachedInput: 0.5, cacheWrite: 6.25, output: 25 }),
   "claude-opus-4.7": rate({ input: 5, cachedInput: 0.5, cacheWrite: 6.25, output: 25 }),
   "claude-opus-4.8": rate({ input: 5, cachedInput: 0.5, cacheWrite: 6.25, output: 25 }),
+  "claude-fable-5": rate({ input: 10, cachedInput: 1, cacheWrite: 12.5, output: 50 }),
   "gemini-2.5-pro": rate({ input: 1.25, cachedInput: 0.125, output: 10 }),
   "gemini-3-flash": rate({ input: 0.5, cachedInput: 0.05, output: 3 }),
-  "gemini-3.1-pro": rate({ input: 2, cachedInput: 0.2, output: 12 }),
-  "grok-code-fast-1": rate({ input: 0.2, cachedInput: 0.02, output: 1.5 }),
+  "gemini-3.1-pro": rate({
+    input: 2,
+    cachedInput: 0.2,
+    output: 12,
+    longContext: { thresholdInputTokens: 200_000, input: 4, cachedInput: 0.4, output: 18 }
+  }),
+  "gemini-3.5-flash": rate({ input: 1.5, cachedInput: 0.15, output: 9 }),
+  "mai-code-1-flash": rate({ input: 0.75, cachedInput: 0.075, output: 4.5 }),
   "raptor-mini": rate({ input: 0.25, cachedInput: 0.025, output: 2 }),
-  "goldeneye": rate({ input: 1.25, cachedInput: 0.125, output: 10 })
 });
 
 export const modelAliases = Object.freeze({
@@ -74,19 +87,37 @@ export const modelAliases = Object.freeze({
   "claude opus 4.6": "claude-opus-4.6",
   "claude opus 4.7": "claude-opus-4.7",
   "claude opus 4.8": "claude-opus-4.8",
+  "claude fable 5": "claude-fable-5",
   "gemini 2.5 pro": "gemini-2.5-pro",
   "gemini 3 flash": "gemini-3-flash",
   "gemini 3.1 pro": "gemini-3.1-pro",
-  "grok code fast 1": "grok-code-fast-1",
+  "gemini 3.5 flash": "gemini-3.5-flash",
+  "goldeneye": "mai-code-1-flash",
+  "mai code 1 flash": "mai-code-1-flash",
   "raptor mini": "raptor-mini"
 });
 
-function rate({ input, cachedInput, cacheWrite = 0, output }) {
-  return Object.freeze({
+function rate({ input, cachedInput, cacheWrite = 0, output, longContext }) {
+  const defaultRate = Object.freeze({
+    tier: "default",
     inputPerMillionUsd: input,
     cachedInputPerMillionUsd: cachedInput,
     cacheWritePerMillionUsd: cacheWrite,
     outputPerMillionUsd: output
+  });
+  if (!longContext) {
+    return defaultRate;
+  }
+  return Object.freeze({
+    ...defaultRate,
+    longContext: Object.freeze({
+      tier: "long-context",
+      thresholdInputTokens: longContext.thresholdInputTokens,
+      inputPerMillionUsd: longContext.input,
+      cachedInputPerMillionUsd: longContext.cachedInput,
+      cacheWritePerMillionUsd: longContext.cacheWrite ?? cacheWrite,
+      outputPerMillionUsd: longContext.output
+    })
   });
 }
 

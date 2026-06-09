@@ -35,8 +35,9 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
   const modelBreakdown = normalizeModelUsage(sessionUsage).map((usage) => {
     const modelId = resolveKnownModelId(usage.model, usageBasedRates);
     const directAiCredits = readDirectAiCredits(usage, "copilot-cli-model-aiu");
-    const rate = usageBasedRates[modelId];
-    if (!rate && !directAiCredits && !directSessionAiCredits) {
+    const rateEntry = usageBasedRates[modelId];
+    const rate = selectUsageRate(rateEntry, usage);
+    if (!rateEntry && !directAiCredits && !directSessionAiCredits) {
       throw new Error(`No usage-based token rate configured for model '${usage.model}' (${modelId}).`);
     }
 
@@ -65,6 +66,8 @@ export function calculateUsageBasedCost(sessionUsage, scenario = {}) {
       cacheWriteTokens: usage.cacheWriteTokens,
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens,
+      rateTier: rate?.tier,
+      rateThresholdInputTokens: rate?.thresholdInputTokens,
       rates: {
         inputPerMillionUsd: rate?.inputPerMillionUsd,
         cachedInputPerMillionUsd: rate?.cachedInputPerMillionUsd,
@@ -150,6 +153,29 @@ export function resolveKnownModelId(model, lookupTable) {
   return Object.keys(lookupTable ?? {})
     .filter((candidate) => hasModelPrefix(modelId, candidate))
     .sort((left, right) => right.length - left.length)[0] ?? modelId;
+}
+
+function selectUsageRate(rateEntry, usage) {
+  if (!rateEntry) {
+    return undefined;
+  }
+  if (rateEntry.longContext && shouldUseLongContextRate(rateEntry.longContext, usage)) {
+    return rateEntry.longContext;
+  }
+  return rateEntry;
+}
+
+function shouldUseLongContextRate(longContextRate, usage) {
+  const threshold = numberOrZero(longContextRate.thresholdInputTokens);
+  return (threshold > 0 && numberOrZero(usage.inputTokens) > threshold)
+    || isLongContextModelName(usage.model);
+}
+
+function isLongContextModelName(model) {
+  const modelId = normalizeModelId(model).replace(/_/g, "-");
+  return /(^|[-(])(long|large)-?context($|[-)\]])/.test(modelId)
+    || /(^|[-(])1m($|[-)\]])/.test(modelId)
+    || /(^|[-(])1m-?context($|[-)\]])/.test(modelId);
 }
 
 function hasModelPrefix(modelId, candidate) {

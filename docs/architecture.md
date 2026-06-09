@@ -78,6 +78,8 @@ reasoningUsd        = 0 unless billReasoningTokens is true
 
 Reasoning tokens are shown as informational only by default because GitHub's published Copilot pricing table does not list a separate reasoning-token bucket. `billReasoningTokens` can opt into output-priced reasoning cost if Copilot metrics are later confirmed to report output tokens excluding reasoning.
 
+For models with published long-context tiers, pricing uses the long-context rates when total `inputTokens` exceed the documented threshold or the reported model name explicitly identifies an extended context variant.
+
 ## Accuracy notes
 
 The estimate is intended to be explainable and reconcilable, not an invoice:

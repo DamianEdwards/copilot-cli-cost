@@ -54,10 +54,10 @@ test("calculates usage-based billing from token buckets", () => {
     currency: "USD"
   });
 
-  assert.equal(result.totalUsd, 49.55);
-  assert.equal(result.aiCredits, 4955);
+  assert.equal(result.totalUsd, 65.05);
+  assert.equal(result.aiCredits, 6505);
   assert.equal(result.includedAiCredits, 1500);
-  assert.equal(result.allowanceUsagePercentage, 330.333333);
+  assert.equal(result.allowanceUsagePercentage, 433.666667);
   assert.deepEqual(result.includedAiCreditAllotment, {
     baseAiCredits: 1000,
     flexAiCredits: 500,
@@ -65,16 +65,18 @@ test("calculates usage-based billing from token buckets", () => {
   });
   assert.equal(result.modelBreakdown.length, 2);
   assert.deepEqual(result.modelBreakdown[0].rates, {
-    inputPerMillionUsd: 5,
-    cachedInputPerMillionUsd: 0.5,
+    inputPerMillionUsd: 10,
+    cachedInputPerMillionUsd: 1,
     cacheWritePerMillionUsd: 0,
-    outputPerMillionUsd: 30,
+    outputPerMillionUsd: 45,
     reasoningPerMillionUsd: 0
   });
+  assert.equal(result.modelBreakdown[0].rateTier, "long-context");
+  assert.equal(result.modelBreakdown[0].rateThresholdInputTokens, 272_000);
   assert.equal(result.modelBreakdown[0].uncachedInputTokens, 0);
   assert.equal(result.modelBreakdown[0].inputUsd, 0);
-  assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.5);
-  assert.equal(result.modelBreakdown[0].outputUsd, 30);
+  assert.equal(result.modelBreakdown[0].cachedInputUsd, 1);
+  assert.equal(result.modelBreakdown[0].outputUsd, 45);
 });
 
 test("calculates usage-based allowances with individual flex allotments", () => {
@@ -190,9 +192,9 @@ test("calculates usage-based input billing from uncached input tokens", () => {
 
   assert.equal(result.modelBreakdown[0].inputTokens, 1_000_000);
   assert.equal(result.modelBreakdown[0].uncachedInputTokens, 600_000);
-  assert.equal(result.modelBreakdown[0].inputUsd, 3);
-  assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.2);
-  assert.equal(result.totalUsd, 3.2);
+  assert.equal(result.modelBreakdown[0].inputUsd, 6);
+  assert.equal(result.modelBreakdown[0].cachedInputUsd, 0.4);
+  assert.equal(result.totalUsd, 6.4);
 });
 
 test("falls back to known model prefixes for suffixed display names", () => {
@@ -234,6 +236,84 @@ test("falls back to known model prefixes for suffixed display names", () => {
   assert.equal(mini.totalUsd, 0.75);
 });
 
+test("selects long-context pricing for thresholded and named large-context model usage", () => {
+  const thresholded = calculateSessionCost(
+    {
+      sessionId: "long-context-threshold-session",
+      modelUsage: [
+        {
+          model: "gpt-5.5",
+          inputTokens: 272_001,
+          cachedInputTokens: 72_001,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+  const named = calculateSessionCost(
+    {
+      sessionId: "long-context-name-session",
+      modelUsage: [
+        {
+          model: "Gemini 3.1 Pro (1M Context)(Internal only)",
+          inputTokens: 10_000,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(thresholded.modelBreakdown[0].model, "gpt-5.5");
+  assert.equal(thresholded.modelBreakdown[0].rateTier, "long-context");
+  assert.equal(thresholded.modelBreakdown[0].rateThresholdInputTokens, 272_000);
+  assert.equal(thresholded.modelBreakdown[0].inputUsd, 2);
+  assert.equal(thresholded.modelBreakdown[0].cachedInputUsd, 0.072001);
+  assert.equal(thresholded.totalUsd, 47.072001);
+  assert.equal(named.modelBreakdown[0].model, "gemini-3.1-pro");
+  assert.equal(named.modelBreakdown[0].rateTier, "long-context");
+  assert.equal(named.modelBreakdown[0].rateThresholdInputTokens, 200_000);
+  assert.equal(named.totalUsd, 18.04);
+});
+
+test("calculates usage-based billing for Claude Fable 5", () => {
+  const result = calculateSessionCost(
+    {
+      sessionId: "claude-fable-session",
+      modelUsage: [
+        {
+          model: "Claude Fable 5",
+          inputTokens: 1_000_000,
+          cachedInputTokens: 500_000,
+          cacheWriteTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }
+      ]
+    },
+    {
+      billingModel: "usage-based",
+      currency: "USD"
+    }
+  );
+
+  assert.equal(result.modelBreakdown[0].model, "claude-fable-5");
+  assert.deepEqual(result.modelBreakdown[0].rates, {
+    inputPerMillionUsd: 10,
+    cachedInputPerMillionUsd: 1,
+    cacheWritePerMillionUsd: 12.5,
+    outputPerMillionUsd: 50,
+    reasoningPerMillionUsd: 0
+  });
+  assert.equal(result.totalUsd, 68);
+});
+
 test("prefers Copilot-reported session AI credits when available", () => {
   const result = calculateSessionCost(
     {
@@ -257,7 +337,7 @@ test("prefers Copilot-reported session AI credits when available", () => {
   assert.equal(result.totalUsd, 0.015);
   assert.equal(result.creditCalculationMethod, "copilot-aiu");
   assert.equal(result.creditCalculationSource, "copilot-cli-session-aiu");
-  assert.equal(result.tokenEstimatedTotalUsd, 35);
+  assert.equal(result.tokenEstimatedTotalUsd, 55);
   assert.equal(result.modelBreakdown[0].creditCalculationSource, "token-rate-estimate");
 });
 
@@ -284,7 +364,7 @@ test("prefers Copilot-reported model AI credits when session total is unavailabl
   assert.equal(result.totalUsd, 0.02);
   assert.equal(result.creditCalculationMethod, "copilot-aiu");
   assert.equal(result.creditCalculationSource, "copilot-cli-model-aiu");
-  assert.equal(result.modelBreakdown[0].tokenEstimatedTotalUsd, 5);
+  assert.equal(result.modelBreakdown[0].tokenEstimatedTotalUsd, 10);
   assert.equal(result.modelBreakdown[0].creditCalculationSource, "copilot-cli-model-aiu");
 });
 
@@ -309,7 +389,7 @@ test("treats zero Copilot-reported AI credits as authoritative", () => {
   assert.equal(result.aiCredits, 0);
   assert.equal(result.totalUsd, 0);
   assert.equal(result.creditCalculationSource, "copilot-cli-session-aiu");
-  assert.equal(result.tokenEstimatedTotalUsd, 5);
+  assert.equal(result.tokenEstimatedTotalUsd, 10);
 });
 
 test("uses Copilot-reported AI credits for models without local token rates", () => {
@@ -364,10 +444,10 @@ test("keeps reasoning tokens informational unless explicitly billed", () => {
   assert.equal(defaultResult.modelBreakdown[0].uncachedInputTokens, 151_391);
   assert.equal(defaultResult.modelBreakdown[0].reasoningUsd, 0);
   assert.equal(defaultResult.modelBreakdown[0].rates.reasoningPerMillionUsd, 0);
-  assert.equal(defaultResult.totalUsd, 1.120029);
-  assert.equal(optInResult.modelBreakdown[0].reasoningUsd, 0.1092);
-  assert.equal(optInResult.modelBreakdown[0].rates.reasoningPerMillionUsd, 15);
-  assert.equal(optInResult.totalUsd, 1.229229);
+  assert.equal(defaultResult.totalUsd, 2.10469);
+  assert.equal(optInResult.modelBreakdown[0].reasoningUsd, 0.1638);
+  assert.equal(optInResult.modelBreakdown[0].rates.reasoningPerMillionUsd, 22.5);
+  assert.equal(optInResult.totalUsd, 2.26849);
 });
 
 test("calculates zero usage when model usage is not available yet", () => {
@@ -412,7 +492,7 @@ test("supports non-USD display currency with explicit exchange rate", () => {
   });
 
   assert.equal(result.currency.code, "EUR");
-  assert.equal(result.displayTotal, 44.595);
+  assert.equal(result.displayTotal, 58.545);
 });
 
 test("carries exchange-rate metadata into calculation output", () => {

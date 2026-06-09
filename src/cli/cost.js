@@ -234,8 +234,15 @@ function printHuman(result, aggregateResult, sessionUsage = {}) {
   console.log("Model breakdown:");
   for (const item of result.modelBreakdown) {
     const uncachedInputTokens = item.uncachedInputTokens ?? Math.max(Number(item.inputTokens ?? 0) - Number(item.cachedInputTokens ?? 0), 0);
-    console.log(`- ${item.model}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${uncachedInputTokens} uncached input, ${item.cachedInputTokens} cached input, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
+    console.log(`- ${formatModelName(item)}: ${formatMoney(item.totalUsd, "USD")} / ${item.aiCredits} credits (${uncachedInputTokens} uncached input, ${item.cachedInputTokens} cached input, ${item.outputTokens} output, ${item.reasoningTokens} reasoning tokens)`);
   }
+}
+
+function formatModelName(item) {
+  if (item.rateTier === "long-context") {
+    return `${item.model} (long context)`;
+  }
+  return item.model;
 }
 
 function printHelp() {
