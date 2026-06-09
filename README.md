@@ -394,6 +394,8 @@ aiCredits           = totalUsd / 0.01
 includedAiCredits   = baseAiCredits + current flexAiCredits + current promotionalAiCredits
 ```
 
+Some published model rates include a higher long-context tier. The calculator selects that tier when the model's total `inputTokens` exceeds the documented threshold, or when Copilot reports a model name that explicitly indicates an extended context variant such as `Long Context`, `Large Context`, or `1M Context`.
+
 For individual usage-based billing, Pro and Pro+ include a fixed base credit amount plus a variable flex allotment. The calculator reports the current published total as included credits and preserves the base/flex split in machine-readable output.
 
 During GitHub's June 1-September 1, 2026 usage-based billing transition, existing Copilot Business and Enterprise customers receive promotional included credits. The calculator applies those promotional credits by default during that window and preserves them as a separate `promotionalAiCredits` component, for example `7,000 included (3,900 base + 3,100 promotional)` for Copilot Enterprise.

@@ -601,7 +601,7 @@ function renderBreakdown(usageBased) {
     return `
       <div class="model-card">
         <div class="model-card-header">
-          <strong>${escapeHtml(item.model)}</strong>
+          <strong>${escapeHtml(formatModelName(item))}</strong>
           <span>${formatCurrency(item.displayTotal, currency.code)} · ${formatNumber(item.aiCredits, 1)} credits</span>
         </div>
         <p class="model-card-meta">${escapeHtml(formatCreditCalculation(item))}${formatTokenEstimateNote(item, currency)}</p>
@@ -625,6 +625,13 @@ function renderBreakdown(usageBased) {
       </div>
     `;
   }).join("");
+}
+
+function formatModelName(item) {
+  if (item.rateTier === "long-context") {
+    return `${item.model} (long context)`;
+  }
+  return item.model;
 }
 
 function formatCreditCalculation(result) {
