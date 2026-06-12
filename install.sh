@@ -8,14 +8,20 @@ install_base_url="${COPILOT_COST_INSTALL_BASE_URL:-https://raw.githubusercontent
 copilot_home="${COPILOT_HOME:-${HOME}/.copilot}"
 configure_script=""
 configure_temp_dir=""
+installer_script_dir=""
 skip_statusline=0
 assume_yes=0
+uninstall=0
+
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  installer_script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fi
 
 usage() {
   cat <<'USAGE'
-Usage: ./install.sh [--plugin-source <source>] [--marketplace-name <name>] [--plugin-name <name>] [--install-base-url <url>] [--copilot-home <path>] [--skip-statusline] [--yes]
+Usage: ./install.sh [--plugin-source <source>] [--marketplace-name <name>] [--plugin-name <name>] [--install-base-url <url>] [--copilot-home <path>] [--skip-statusline] [--yes] [--uninstall]
 
-Installs the Copilot CLI Cost plugin, user extension shim, and status line.
+Installs or uninstalls the Copilot CLI Cost plugin, user extension shim, and status line.
 USAGE
 }
 
@@ -63,6 +69,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-statusline)
       skip_statusline=1
+      shift
+      ;;
+    --uninstall)
+      uninstall=1
       shift
       ;;
     --yes)
@@ -161,6 +171,16 @@ initialize_plugin_marketplace() {
 }
 
 get_configure_script() {
+  get_local_script "configure-install.mjs"
+  local_configure_script="$local_script"
+  get_local_script "statusline-launcher.mjs"
+  local_launcher_script="$local_script"
+  if [ -n "$local_configure_script" ] && [ -n "$local_launcher_script" ]; then
+    echo "Using local installer helper at ${local_configure_script}." >&2
+    configure_script="$local_configure_script"
+    return
+  fi
+
   configure_temp_dir="$(mktemp -d)"
   trap 'rm -rf "$configure_temp_dir"' EXIT
   configure_script="${configure_temp_dir}/configure-install.mjs"
@@ -172,6 +192,45 @@ get_configure_script() {
   download_file "$launcher_remote_url" "${configure_temp_dir}/statusline-launcher.mjs"
 }
 
+get_local_script() {
+  name="$1"
+  local_script=""
+  if [ -n "$installer_script_dir" ] && [ -f "${installer_script_dir}/scripts/${name}" ]; then
+    local_script="${installer_script_dir}/scripts/${name}"
+  fi
+}
+
+get_remote_script() {
+  name="$1"
+  get_local_script "$name"
+  if [ -n "$local_script" ]; then
+    echo "Using local installer helper at ${local_script}." >&2
+    remote_script="$local_script"
+    return
+  fi
+
+  if [ -z "$configure_temp_dir" ]; then
+    configure_temp_dir="$(mktemp -d)"
+    trap 'rm -rf "$configure_temp_dir"' EXIT
+  fi
+
+  remote_url="${install_base_url%/}/scripts/${name}"
+  output="${configure_temp_dir}/${name}"
+  download_file "$remote_url" "$output"
+  remote_script="$output"
+}
+
+uninstall_plugin_if_installed() {
+  plugin_list="$1"
+  name="$2"
+  if plugin_installed "$plugin_list" "$name"; then
+    echo "Uninstalling Copilot CLI Cost plugin ${name}..."
+    copilot plugin uninstall "$name"
+    return 0
+  fi
+  return 1
+}
+
 case "$copilot_home" in
   /*) ;;
   *) copilot_home="$(pwd)/$copilot_home" ;;
@@ -181,6 +240,35 @@ installed_plugins="${copilot_home}/installed-plugins"
 
 require_command copilot
 require_command node
+
+if [ "$uninstall" -eq 1 ]; then
+  echo "Uninstalling Copilot CLI Cost..."
+  get_remote_script "configure-install.mjs"
+  configure_script="$remote_script"
+  get_remote_script "install-extension-shim.mjs"
+  shim_script="$remote_script"
+
+  node "$configure_script" --uninstall --platform posix --copilot-home "$copilot_home"
+  node "$shim_script" --uninstall --copilot-home "$copilot_home"
+
+  plugin_list="$(copilot plugin list 2>/dev/null || true)"
+  marketplace_plugin="${plugin_name}@${marketplace_name}"
+  removed_plugin=0
+  if uninstall_plugin_if_installed "$plugin_list" "$marketplace_plugin"; then
+    removed_plugin=1
+    plugin_list="$(copilot plugin list 2>/dev/null || true)"
+  fi
+  if uninstall_plugin_if_installed "$plugin_list" "$plugin_name"; then
+    removed_plugin=1
+  fi
+  if [ "$removed_plugin" -eq 0 ]; then
+    echo "Copilot CLI Cost plugin was not installed."
+  fi
+
+  echo
+  echo "Uninstall complete. Restart active Copilot CLI sessions to unload any extension instance that was already running."
+  exit 0
+fi
 
 echo "Installing or updating Copilot CLI Cost plugin..."
 plugin_list="$(copilot plugin list 2>/dev/null || true)"

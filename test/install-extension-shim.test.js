@@ -81,3 +81,53 @@ test("installer requires an installed plugin copy", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Run install\.ps1\/install\.sh first/);
 });
+
+test("uninstaller removes generated extension shim", () => {
+  const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-shim-home-"));
+  const installedExtension = path.join(
+    copilotHome,
+    "installed-plugins",
+    "_direct",
+    "DamianEdwards--copilot-cli-cost",
+    ".github",
+    "extensions",
+    "copilot-cli-cost",
+    "extension.mjs"
+  );
+  const shimPath = path.join(copilotHome, "extensions", "copilot-cli-cost", "extension.mjs");
+
+  fs.mkdirSync(path.dirname(installedExtension), { recursive: true });
+  fs.writeFileSync(installedExtension, "export {};\n");
+
+  const installResult = spawnSync(process.execPath, [sourceInstaller, "--copilot-home", copilotHome], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+  assert.equal(installResult.status, 0, installResult.stderr || installResult.stdout);
+  assert.equal(fs.existsSync(shimPath), true);
+
+  const uninstallResult = spawnSync(process.execPath, [sourceInstaller, "--uninstall", "--copilot-home", copilotHome], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+
+  assert.equal(uninstallResult.status, 0, uninstallResult.stderr || uninstallResult.stdout);
+  assert.equal(fs.existsSync(shimPath), false);
+});
+
+test("uninstaller refuses to remove a non-Copilot-Cost extension", () => {
+  const copilotHome = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-shim-home-"));
+  const shimPath = path.join(copilotHome, "extensions", "copilot-cli-cost", "extension.mjs");
+
+  fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+  fs.writeFileSync(shimPath, "export {};\n");
+
+  const result = spawnSync(process.execPath, [sourceInstaller, "--uninstall", "--copilot-home", copilotHome], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Refusing to remove existing non-Copilot-Cost extension/);
+  assert.equal(fs.existsSync(shimPath), true);
+});

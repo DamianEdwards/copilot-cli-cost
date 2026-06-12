@@ -22,6 +22,11 @@ async function main() {
   const launcherDirectory = args.launcherDirectory ?? path.join(copilotHome, "copilot-cli-cost");
   const prompt = createPrompter(args);
 
+  if (args.uninstall) {
+    await uninstallConfiguration({ launcherDirectory, platform: args.platform, prompt, settingsPath });
+    return;
+  }
+
   const { settings, existed, jsonc } = readSettings(settingsPath);
   let settingsChanged = false;
 
@@ -68,6 +73,7 @@ function parseArgs(argv) {
   const args = {
     platform: process.platform === "win32" ? "windows" : "posix",
     skipStatusLine: false,
+    uninstall: false,
     yes: false
   };
 
@@ -89,6 +95,9 @@ function parseArgs(argv) {
       case "--skip-statusline":
         args.skipStatusLine = true;
         break;
+      case "--uninstall":
+        args.uninstall = true;
+        break;
       case "--yes":
         args.yes = true;
         break;
@@ -102,6 +111,30 @@ function parseArgs(argv) {
   }
 
   return args;
+}
+
+async function uninstallConfiguration({ launcherDirectory, platform, prompt, settingsPath }) {
+  const { settings, existed } = readSettings(settingsPath);
+  let settingsChanged = false;
+
+  if (existed) {
+    settingsChanged = await removeStatusLineConfiguration(settings, { launcherDirectory, platform, prompt });
+  }
+
+  const removedLauncherFiles = removeGeneratedLauncherFiles(launcherDirectory);
+
+  if (settingsChanged) {
+    writeSettings(settingsPath, settings, true);
+    console.log(`Updated Copilot settings at ${settingsPath}`);
+  } else if (existed) {
+    console.log(`Copilot settings at ${settingsPath} did not contain a Copilot Cost status line.`);
+  } else {
+    console.log(`Copilot settings do not exist at ${settingsPath}.`);
+  }
+
+  if (!removedLauncherFiles) {
+    console.log(`No generated Copilot Cost statusline launchers were removed from ${launcherDirectory}.`);
+  }
 }
 
 function readValue(argv, index, flag) {
@@ -547,6 +580,119 @@ async function configureStatusLine(settings, options) {
     command: makeStatusLineCommand(options.platform, decoratorPath)
   };
   return true;
+}
+
+async function removeStatusLineConfiguration(settings, options) {
+  const existingStatusLine = settings.statusLine;
+  if (!isPlainObject(existingStatusLine) || typeof existingStatusLine.command !== "string") {
+    return false;
+  }
+
+  const command = existingStatusLine.command;
+  const launcherPath = path.join(options.launcherDirectory, options.platform === "windows" ? "statusline.cmd" : "statusline.sh");
+  const decoratorPath = path.join(options.launcherDirectory, options.platform === "windows" ? "statusline-decorator.cmd" : "statusline-decorator.sh");
+  const launcherCommand = makeStatusLineCommand(options.platform, launcherPath);
+  const decoratorCommand = makeStatusLineCommand(options.platform, decoratorPath);
+
+  if (command === decoratorCommand) {
+    const passthroughCommand = readDecoratorPassthroughCommand(decoratorPath, options.platform);
+    if (passthroughCommand) {
+      settings.statusLine = { ...existingStatusLine, type: "command", command: passthroughCommand };
+      return true;
+    }
+    delete settings.statusLine;
+    return true;
+  }
+
+  if (command === launcherCommand) {
+    delete settings.statusLine;
+    return true;
+  }
+
+  if (isCopilotCostStatusLine(command)) {
+    const remove = await options.prompt.confirm(
+      `Remove Copilot Cost status line from ${command}?`,
+      { assumeYes: true, defaultValue: true, nonInteractive: true }
+    );
+    if (!remove) {
+      return false;
+    }
+    delete settings.statusLine;
+    return true;
+  }
+
+  return false;
+}
+
+function readDecoratorPassthroughCommand(decoratorPath, platform) {
+  if (!isGeneratedFile(decoratorPath)) {
+    return undefined;
+  }
+
+  const content = fs.readFileSync(decoratorPath, "utf8");
+  if (platform === "windows") {
+    const match = /^set "COPILOT_COST_STATUSLINE_PASSTHROUGH=(.*)"$/m.exec(content);
+    return match ? match[1].replaceAll("%%", "%") : undefined;
+  }
+
+  const match = /^COPILOT_COST_STATUSLINE_PASSTHROUGH=(.+)$/m.exec(content);
+  return match ? readShellSingleQuoted(match[1]) : undefined;
+}
+
+function readShellSingleQuoted(value) {
+  if (!value.startsWith("'") || !value.endsWith("'")) {
+    return undefined;
+  }
+  return value.slice(1, -1).replaceAll("'\\''", "'");
+}
+
+function removeGeneratedLauncherFiles(launcherDirectory) {
+  if (!fs.existsSync(launcherDirectory)) {
+    return false;
+  }
+
+  if (!fs.statSync(launcherDirectory).isDirectory()) {
+    console.log(`Skipped ${launcherDirectory} because it is not a directory.`);
+    return false;
+  }
+
+  let removed = false;
+  for (const fileName of [
+    "statusline-launcher.mjs",
+    "statusline.cmd",
+    "statusline.sh",
+    "statusline-decorator.cmd",
+    "statusline-decorator.sh"
+  ]) {
+    const filePath = path.join(launcherDirectory, fileName);
+    if (!fs.existsSync(filePath)) {
+      continue;
+    }
+    if (!isGeneratedFile(filePath)) {
+      console.log(`Skipped ${filePath} because it was not generated by Copilot Cost.`);
+      continue;
+    }
+    fs.rmSync(filePath, { force: true });
+    removed = true;
+    console.log(`Removed generated Copilot Cost launcher ${filePath}`);
+  }
+
+  try {
+    if (fs.readdirSync(launcherDirectory).length === 0) {
+      fs.rmdirSync(launcherDirectory);
+      console.log(`Removed empty Copilot Cost launcher directory ${launcherDirectory}`);
+    }
+  } catch (error) {
+    console.log(`Left launcher directory ${launcherDirectory}: ${error.message}`);
+  }
+
+  return removed;
+}
+
+function isGeneratedFile(filePath) {
+  return fs.existsSync(filePath) &&
+    fs.statSync(filePath).isFile() &&
+    fs.readFileSync(filePath, "utf8").includes(generatedMarker);
 }
 
 async function ensureDecoratorLauncher({ currentCommand, launcherDirectory, platform, prompt }) {

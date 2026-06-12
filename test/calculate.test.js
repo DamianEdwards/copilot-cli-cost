@@ -1700,14 +1700,139 @@ test("configure installer falls back to installed plugin launcher when remote si
   }
 });
 
+test("configure uninstaller removes generated statusline settings and launchers", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const copilotHome = path.join(storeDirectory, "copilot-home");
+    const launcherDirectory = path.join(storeDirectory, "launcher");
+    const settingsPath = path.join(storeDirectory, "settings.json");
+    const configureScript = fileURLToPath(new URL("../scripts/configure-install.mjs", import.meta.url));
+
+    const configureResult = spawnSync(
+      process.execPath,
+      [
+        configureScript,
+        "--yes",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        settingsPath,
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+    assert.equal(configureResult.status, 0, configureResult.stderr || configureResult.stdout);
+    assert.equal(fs.existsSync(launcherDirectory), true);
+
+    const uninstallResult = spawnSync(
+      process.execPath,
+      [
+        configureScript,
+        "--uninstall",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        settingsPath,
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+
+    assert.equal(uninstallResult.status, 0, uninstallResult.stderr || uninstallResult.stdout);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.equal(settings.statusLine, undefined);
+    assert.equal(fs.existsSync(launcherDirectory), false);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
+test("configure uninstaller restores decorated statusline command", () => {
+  const storeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-cost-test-"));
+  try {
+    const copilotHome = path.join(storeDirectory, "copilot-home");
+    const launcherDirectory = path.join(storeDirectory, "launcher");
+    const settingsPath = path.join(storeDirectory, "settings.json");
+    const configureScript = fileURLToPath(new URL("../scripts/configure-install.mjs", import.meta.url));
+    const originalCommand = process.platform === "win32"
+      ? path.join(storeDirectory, "existing-statusline.cmd")
+      : `sh "${path.join(storeDirectory, "existing-statusline.sh").replaceAll("\\", "\\\\")}"`;
+
+    fs.writeFileSync(settingsPath, JSON.stringify({ statusLine: { type: "command", command: originalCommand } }, null, 2));
+
+    const configureResult = spawnSync(
+      process.execPath,
+      [
+        configureScript,
+        "--yes",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        settingsPath,
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+    assert.equal(configureResult.status, 0, configureResult.stderr || configureResult.stdout);
+    assert.notEqual(JSON.parse(fs.readFileSync(settingsPath, "utf8")).statusLine.command, originalCommand);
+
+    const uninstallResult = spawnSync(
+      process.execPath,
+      [
+        configureScript,
+        "--uninstall",
+        "--copilot-home",
+        copilotHome,
+        "--settings-path",
+        settingsPath,
+        "--launcher-directory",
+        launcherDirectory
+      ],
+      {
+        encoding: "utf8",
+        shell: false
+      }
+    );
+
+    assert.equal(uninstallResult.status, 0, uninstallResult.stderr || uninstallResult.stdout);
+    assert.equal(JSON.parse(fs.readFileSync(settingsPath, "utf8")).statusLine.command, originalCommand);
+    assert.equal(fs.existsSync(launcherDirectory), false);
+  } finally {
+    fs.rmSync(storeDirectory, { force: true, recursive: true });
+  }
+});
+
 test("remote installers download configure helper dependencies together", () => {
   const installPs1 = fs.readFileSync(new URL("../install.ps1", import.meta.url), "utf8");
+  assert.match(installPs1, /Get-LocalInstallerScript "configure-install\.mjs"/);
+  assert.match(installPs1, /Get-LocalInstallerScript "statusline-launcher\.mjs"/);
+  assert.match(installPs1, /Get-InstallerScript "install-extension-shim\.mjs"/);
   assert.match(installPs1, /scripts\/statusline-launcher\.mjs/);
   assert.match(installPs1, /Invoke-WebRequest -Uri \$remoteLauncherUrl -OutFile \$remoteLauncherScript/);
+  assert.match(installPs1, /scripts\/\$Name/);
+  assert.match(installPs1, /--uninstall/);
 
   const installSh = fs.readFileSync(new URL("../install.sh", import.meta.url), "utf8");
+  assert.match(installSh, /BASH_SOURCE\[0\]/);
+  assert.match(installSh, /get_local_script "configure-install\.mjs"/);
+  assert.match(installSh, /get_local_script "statusline-launcher\.mjs"/);
+  assert.match(installSh, /get_remote_script "install-extension-shim\.mjs"/);
   assert.match(installSh, /scripts\/statusline-launcher\.mjs/);
   assert.match(installSh, /download_file "\$launcher_remote_url" "\$\{configure_temp_dir\}\/statusline-launcher\.mjs"/);
+  assert.match(installSh, /install-extension-shim\.mjs/);
+  assert.match(installSh, /--uninstall/);
 });
 
 function runGeneratedStatusline(launcher, payload, cwd) {

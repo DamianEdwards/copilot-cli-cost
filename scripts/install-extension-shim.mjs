@@ -8,7 +8,13 @@ const extensionName = "copilot-cli-cost";
 const extensionRelativePath = path.join(".github", "extensions", extensionName, "extension.mjs");
 
 try {
-  const copilotHome = readCopilotHome(process.argv.slice(2));
+  const args = parseArgs(process.argv.slice(2));
+  const copilotHome = args.copilotHome;
+  if (args.uninstall) {
+    uninstallShim(copilotHome);
+    process.exit(0);
+  }
+
   const sourceExtension = findInstalledExtension(copilotHome);
   const targetDirectory = path.join(copilotHome, "extensions", extensionName);
   const targetExtension = path.join(targetDirectory, "extension.mjs");
@@ -34,17 +40,34 @@ try {
   process.exitCode = 1;
 }
 
-function readCopilotHome(argv) {
+function parseArgs(argv) {
+  const args = {
+    copilotHome: path.resolve(process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot")),
+    uninstall: false
+  };
+
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === "--copilot-home") {
-      const value = argv[index + 1];
-      if (!value) {
-        throw new Error("--copilot-home requires a value.");
-      }
-      return path.resolve(value);
+    switch (argv[index]) {
+      case "--copilot-home":
+        args.copilotHome = path.resolve(readValue(argv, ++index, "--copilot-home"));
+        break;
+      case "--uninstall":
+        args.uninstall = true;
+        break;
+      default:
+        throw new Error(`Unknown argument: ${argv[index]}`);
     }
   }
-  return path.resolve(process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot"));
+
+  return args;
+}
+
+function readValue(argv, index, flag) {
+  const value = argv[index];
+  if (!value) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
 }
 
 function findInstalledExtension(copilotHome) {
@@ -65,6 +88,39 @@ function findInstalledExtension(copilotHome) {
 
 function renderShim(sourceExtension) {
   return `import { pathToFileURL } from "node:url";\n\nawait import(pathToFileURL(${JSON.stringify(sourceExtension)}).href);\n`;
+}
+
+function uninstallShim(copilotHome) {
+  const targetDirectory = path.join(copilotHome, "extensions", extensionName);
+  const targetExtension = path.join(targetDirectory, "extension.mjs");
+
+  if (!fs.existsSync(targetExtension)) {
+    console.log(`Copilot Cost extension shim is not installed at ${targetExtension}`);
+    return;
+  }
+
+  const existing = fs.readFileSync(targetExtension, "utf8");
+  if (!isCopilotCostShim(existing)) {
+    throw new Error(`Refusing to remove existing non-Copilot-Cost extension at ${targetExtension}`);
+  }
+
+  fs.rmSync(targetExtension, { force: true });
+  removeDirectoryIfEmpty(targetDirectory);
+  console.log(`Removed Copilot Cost extension shim at ${targetExtension}`);
+}
+
+function isCopilotCostShim(content) {
+  return content.includes(extensionName) && content.includes("await import(pathToFileURL(");
+}
+
+function removeDirectoryIfEmpty(directory) {
+  try {
+    if (fs.existsSync(directory) && fs.readdirSync(directory).length === 0) {
+      fs.rmdirSync(directory);
+    }
+  } catch (error) {
+    console.log(`Removed shim file but left ${directory}: ${error.message}`);
+  }
 }
 
 function findFiles(directory, fileName) {

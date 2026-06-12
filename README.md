@@ -35,7 +35,7 @@ macOS/Linux (`install.sh`):
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)"
 ```
 
-The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. To run the installer script from a checkout instead:
+The remote scripts run in isolation and fetch their helper from the same raw-content base URL before configuring Copilot. When run from a checkout, the installer uses the companion files already present under `scripts/` instead of downloading them. To run the installer script from a checkout:
 
 ```powershell
 .\install.ps1
@@ -65,12 +65,29 @@ Installer options:
 | `--copilot-home <path>` | Use a custom Copilot home directory instead of `~/.copilot`; useful for isolated verification. |
 | `--skip-statusline` | Install the plugin and extension shim without configuring `statusLine`. |
 | `--yes` | Accept installer prompts. Existing status lines are decorated, not replaced. |
+| `--uninstall` / `-Uninstall` | Remove the plugin, user extension shim, and generated Copilot Cost statusline launchers. |
 
 Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this source is registered as a plugin marketplace; set `COPILOT_COST_MARKETPLACE_NAME` / `--marketplace-name` and `COPILOT_COST_PLUGIN_NAME` / `--plugin-name` if your fork changes those marketplace identifiers. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
 If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
 
 When you run `copilot` inside this repository, Copilot CLI's extension resolver prefers the repo-local `.github/extensions/copilot-cli-cost` extension over the user-installed extension. The user-scoped shim intentionally stays pointed at the installed plugin copy for sessions outside the repository.
+
+### Uninstall
+
+The uninstall mode removes the installed plugin, deletes the user-scoped extension shim, removes generated statusline launcher files under `~/.copilot/copilot-cli-cost/`, and removes the Copilot Cost `statusLine` setting. If the installer decorated a previous statusline command, uninstall restores that previous command. Restart active Copilot CLI sessions after uninstalling.
+
+Windows PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.ps1))) -Uninstall
+```
+
+macOS/Linux:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main/install.sh)" -- --uninstall
+```
 
 ### Manual install
 

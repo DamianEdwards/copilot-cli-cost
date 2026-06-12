@@ -6,6 +6,7 @@ param(
   [string]$InstallBaseUrl = $(if ($env:COPILOT_COST_INSTALL_BASE_URL) { $env:COPILOT_COST_INSTALL_BASE_URL } else { "https://raw.githubusercontent.com/DamianEdwards/copilot-cli-cost/main" }),
   [Alias("CopilotHome")]
   [string]$CopilotHomePath = $(if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { "" }),
+  [switch]$Uninstall,
   [switch]$SkipStatusLine,
   [switch]$Yes
 )
@@ -41,11 +42,15 @@ function Get-UserHome {
 }
 
 function Get-ConfigureScript {
-  $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "copilot-cli-cost-install-$([guid]::NewGuid())"
-  $script:temporaryConfigureDirectory = $temporaryDirectory
-  New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
-  $remoteConfigureScript = Join-Path $temporaryDirectory "configure-install.mjs"
-  $remoteLauncherScript = Join-Path $temporaryDirectory "statusline-launcher.mjs"
+  $localConfigureScript = Get-LocalInstallerScript "configure-install.mjs"
+  $localLauncherScript = Get-LocalInstallerScript "statusline-launcher.mjs"
+  if ($localConfigureScript -and $localLauncherScript) {
+    Write-Host "Using local installer helper at $localConfigureScript."
+    return $localConfigureScript
+  }
+
+  $remoteConfigureScript = Get-RemoteInstallerScript "configure-install.mjs"
+  $remoteLauncherScript = Get-RemoteInstallerScript "statusline-launcher.mjs"
   $remoteConfigureUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/configure-install.mjs"
   $remoteLauncherUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/statusline-launcher.mjs"
 
@@ -54,6 +59,48 @@ function Get-ConfigureScript {
   Invoke-WebRequest -Uri $remoteLauncherUrl -OutFile $remoteLauncherScript
 
   return $remoteConfigureScript
+}
+
+function Get-LocalInstallerScript {
+  param([string]$Name)
+
+  if (-not $PSScriptRoot) {
+    return $null
+  }
+
+  $candidate = Join-Path (Join-Path $PSScriptRoot "scripts") $Name
+  if (Test-Path -Path $candidate -PathType Leaf) {
+    return [System.IO.Path]::GetFullPath($candidate)
+  }
+
+  return $null
+}
+
+function Get-InstallerScript {
+  param([string]$Name)
+
+  $localScript = Get-LocalInstallerScript $Name
+  if ($localScript) {
+    Write-Host "Using local installer helper at $localScript."
+    return $localScript
+  }
+
+  $remoteScript = Get-RemoteInstallerScript $Name
+  $remoteUrl = "$($InstallBaseUrl.TrimEnd('/'))/scripts/$Name"
+  Write-Host "Downloading installer helper from $remoteUrl..."
+  Invoke-WebRequest -Uri $remoteUrl -OutFile $remoteScript
+  return $remoteScript
+}
+
+function Get-RemoteInstallerScript {
+  param([string]$Name)
+
+  if (-not $script:temporaryConfigureDirectory) {
+    $script:temporaryConfigureDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "copilot-cli-cost-install-$([guid]::NewGuid())"
+    New-Item -ItemType Directory -Path $script:temporaryConfigureDirectory | Out-Null
+  }
+
+  return Join-Path $script:temporaryConfigureDirectory $Name
 }
 
 function Get-CopilotVersionParts {
@@ -124,6 +171,21 @@ function Initialize-PluginMarketplace {
   }
 }
 
+function Uninstall-PluginIfInstalled {
+  param(
+    [string]$PluginList,
+    [string]$Name
+  )
+
+  if (Test-PluginInstalled $PluginList $Name) {
+    Write-Host "Uninstalling Copilot CLI Cost plugin $Name..."
+    Invoke-Checked "copilot" @("plugin", "uninstall", $Name)
+    return $true
+  }
+
+  return $false
+}
+
 $previousCopilotHome = $env:COPILOT_HOME
 try {
   Require-Command "copilot"
@@ -135,6 +197,29 @@ try {
   $resolvedCopilotHome = [System.IO.Path]::GetFullPath($CopilotHomePath)
   $env:COPILOT_HOME = $resolvedCopilotHome
   $installedPlugins = Join-Path $resolvedCopilotHome "installed-plugins"
+
+  if ($Uninstall) {
+    Write-Host "Uninstalling Copilot CLI Cost..."
+    $configureScript = Get-ConfigureScript
+    $shimScript = Get-InstallerScript "install-extension-shim.mjs"
+
+    Invoke-Checked "node" @($configureScript, "--uninstall", "--platform", "windows", "--copilot-home", $resolvedCopilotHome)
+    Invoke-Checked "node" @($shimScript, "--uninstall", "--copilot-home", $resolvedCopilotHome)
+
+    $pluginList = (& copilot plugin list 2>$null) -join "`n"
+    $removedMarketplacePlugin = Uninstall-PluginIfInstalled $pluginList "$PluginName@$MarketplaceName"
+    if ($removedMarketplacePlugin) {
+      $pluginList = (& copilot plugin list 2>$null) -join "`n"
+    }
+    $removedDirectPlugin = Uninstall-PluginIfInstalled $pluginList $PluginName
+    if (-not $removedMarketplacePlugin -and -not $removedDirectPlugin) {
+      Write-Host "Copilot CLI Cost plugin was not installed."
+    }
+
+    Write-Host ""
+    Write-Host "Uninstall complete. Restart active Copilot CLI sessions to unload any extension instance that was already running."
+    return
+  }
 
   Write-Host "Installing or updating Copilot CLI Cost plugin..."
   $pluginList = (& copilot plugin list 2>$null) -join "`n"
