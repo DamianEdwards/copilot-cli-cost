@@ -273,7 +273,7 @@ try {
   Invoke-Checked "node" $configureArgs
 
   Write-Host ""
-  Write-Host "Install complete. If /cost is not available in an active Copilot CLI session, run /extensions and enable copilot-cli-cost under User."
+  Write-Host "Install complete. Start a new GitHub Copilot app session or restart/reload the app to pick up the Session Cost canvas. In the interactive copilot CLI, use /extensions if you need to inspect or reload copilot-cli-cost."
 } finally {
   if ($temporaryConfigureDirectory -and (Test-Path $temporaryConfigureDirectory)) {
     Remove-Item -Recurse -Force $temporaryConfigureDirectory

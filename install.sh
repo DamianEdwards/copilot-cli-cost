@@ -330,4 +330,4 @@ echo "Configuring Copilot experimental features and status line..."
 node "${configure_args[@]}"
 
 echo
-echo "Install complete. If /cost is not available in an active Copilot CLI session, run /extensions and enable copilot-cli-cost under User."
+echo "Install complete. Start a new GitHub Copilot app session or restart/reload the app to pick up the Session Cost canvas. In the interactive copilot CLI, use /extensions if you need to inspect or reload copilot-cli-cost."

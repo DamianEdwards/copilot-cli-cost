@@ -108,7 +108,11 @@ export class CopilotWebview {
     this.title = title;
     this.width = width;
     this._handle = null;
+    this._canvasHandles = new Map();
     this.close = this.close.bind(this);
+    this.closeAll = this.closeAll.bind(this);
+    this.closeCanvas = this.closeCanvas.bind(this);
+    this.openCanvas = this.openCanvas.bind(this);
     this.show = this.show.bind(this);
   }
 
@@ -136,6 +140,32 @@ export class CopilotWebview {
     return handle;
   }
 
+  async openCanvas(instanceId) {
+    if (!instanceId) {
+      throw new Error("CopilotWebview canvas open requires an instanceId.");
+    }
+
+    let handle = this._canvasHandles.get(instanceId);
+    if (!handle) {
+      handle = await createBridgeServer({
+        callbacks: this.callbacks,
+        dir: this.contentDir
+      });
+      this._canvasHandles.set(instanceId, handle);
+      handle.onClose(() => {
+        if (this._canvasHandles.get(instanceId) === handle) {
+          this._canvasHandles.delete(instanceId);
+        }
+      });
+    }
+
+    return {
+      status: "Ready",
+      title: this.title,
+      url: handle.url
+    };
+  }
+
   eval(code, options) {
     if (!this._handle) {
       return Promise.reject(new Error("webview is not open"));
@@ -146,6 +176,22 @@ export class CopilotWebview {
   close() {
     if (this._handle) {
       this._handle.close();
+    }
+  }
+
+  closeAll() {
+    this.close();
+    for (const [instanceId, handle] of this._canvasHandles) {
+      this._canvasHandles.delete(instanceId);
+      handle.close();
+    }
+  }
+
+  closeCanvas(instanceId) {
+    const handle = this._canvasHandles.get(instanceId);
+    if (handle) {
+      this._canvasHandles.delete(instanceId);
+      handle.close();
     }
   }
 
@@ -199,6 +245,50 @@ export class CopilotWebview {
 }
 
 async function showWebview({ callbacks = {}, dir, height, title, width }) {
+  const bridge = await createBridgeServer({ callbacks, dir });
+  const id = randomBytes(4).toString("hex");
+  const userDataDir = process.platform === "win32" ? join(tmpdir(), `copilot-cost-webview-${id}`) : null;
+  const childEnv = {
+    ...process.env,
+    CW_HEIGHT: String(height),
+    CW_TITLE: title,
+    CW_URL: bridge.url,
+    CW_WIDTH: String(width)
+  };
+  if (userDataDir) {
+    childEnv.WEBVIEW2_USER_DATA_FOLDER = userDataDir;
+  }
+
+  const child = spawn("node", [join(import.meta.dirname, "webview-child.mjs")], {
+    env: childEnv,
+    stdio: ["ignore", "ignore", "inherit"]
+  });
+
+  const handle = {
+    close() {
+      if (!child.killed) {
+        child.kill();
+      }
+    },
+    eval(code, options) {
+      return bridge.eval(code, options);
+    },
+    onClose(callback) {
+      bridge.onClose(callback);
+    }
+  };
+
+  child.on("exit", (code) => {
+    bridge.close(code);
+    if (userDataDir) {
+      removeUserDataDirectory(userDataDir);
+    }
+  });
+
+  return handle;
+}
+
+async function createBridgeServer({ callbacks = {}, dir }) {
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     throw new Error(`directory does not exist: ${dir}`);
   }
@@ -207,10 +297,10 @@ async function showWebview({ callbacks = {}, dir, height, title, width }) {
   }
 
   const { WebSocketServer } = await import("ws");
-  const id = randomBytes(4).toString("hex");
   const pending = new Map();
   const closeListeners = [];
   let socket = null;
+  let closed = false;
 
   const server = createServer(staticHandler(dir));
   server.on("clientError", (_error, clientSocket) => {
@@ -260,30 +350,31 @@ async function showWebview({ callbacks = {}, dir, height, title, width }) {
 
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const url = `http://127.0.0.1:${server.address().port}/`;
-  const userDataDir = process.platform === "win32" ? join(tmpdir(), `copilot-cost-webview-${id}`) : null;
-  const childEnv = {
-    ...process.env,
-    CW_HEIGHT: String(height),
-    CW_TITLE: title,
-    CW_URL: url,
-    CW_WIDTH: String(width)
-  };
-  if (userDataDir) {
-    childEnv.WEBVIEW2_USER_DATA_FOLDER = userDataDir;
-  }
-
-  const child = spawn("node", [join(import.meta.dirname, "webview-child.mjs")], {
-    env: childEnv,
-    stdio: ["ignore", "ignore", "inherit"]
-  });
 
   const handle = {
-    close() {
-      if (!child.killed) {
-        child.kill();
+    url,
+    close(code) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      for (const client of wss.clients) {
+        try {
+          client.close();
+        } catch {}
+      }
+      wss.close();
+      server.close();
+      for (const callback of closeListeners) {
+        try {
+          callback(code);
+        } catch {}
       }
     },
     eval(code, { timeoutMs = 3000 } = {}) {
+      if (closed) {
+        return Promise.reject(new Error("webview bridge is closed"));
+      }
       if (!socket) {
         return Promise.reject(new Error("webview page is not connected yet"));
       }
@@ -308,19 +399,6 @@ async function showWebview({ callbacks = {}, dir, height, title, width }) {
       closeListeners.push(callback);
     }
   };
-
-  child.on("exit", (code) => {
-    server.close();
-    wss.close();
-    for (const callback of closeListeners) {
-      try {
-        callback(code);
-      } catch {}
-    }
-    if (userDataDir) {
-      removeUserDataDirectory(userDataDir);
-    }
-  });
 
   return handle;
 }

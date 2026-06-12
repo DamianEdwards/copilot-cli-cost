@@ -12,7 +12,7 @@ The calculator stores canonical cost in USD and converts to a selected display c
 
 - `/cost` command for active-session estimates
 - `/cost session <session-id>` for completed local sessions
-- Native cost panel with token bucket breakdowns
+- Session Cost canvas in the GitHub Copilot app and native cost panel with token bucket breakdowns
 - What-if subscription comparison for Copilot Free, Pro, Pro+, Max, Business, Enterprise, and Student
 - Display currency selector backed by cached Frankfurter USD exchange rates
 - Statusline cost segment with optional passthrough to another statusline
@@ -49,7 +49,7 @@ The installer:
 
 - On Copilot CLI 1.0.56-0 or newer, registers this repository's marketplace and installs or updates `copilot-cli-cost@copilot-cli-cost-marketplace`. Older Copilot CLI versions use the direct repository install format.
 - Downloads the installer helper from the raw-content base URL.
-- Installs the user-scoped extension shim for `/cost` and the panel.
+- Installs the user-scoped extension shim for `/cost`, the GitHub Copilot app canvas, and the native panel.
 - Enables the Copilot experimental flags needed for extensions and the status line.
 - Configures a stable user-scoped statusline launcher under `~/.copilot/copilot-cli-cost/`.
 
@@ -69,7 +69,7 @@ Installer options:
 
 Set `COPILOT_COST_PLUGIN_SOURCE` or pass `--plugin-source <source>` to install from a fork or alternate plugin source. On Copilot CLI 1.0.56-0 or newer, this source is registered as a plugin marketplace; set `COPILOT_COST_MARKETPLACE_NAME` / `--marketplace-name` and `COPILOT_COST_PLUGIN_NAME` / `--plugin-name` if your fork changes those marketplace identifiers. Set `COPILOT_COST_INSTALL_BASE_URL` or pass `--install-base-url <url>` when running installer scripts from an alternate raw-content location. Set `COPILOT_HOME` or pass `--copilot-home <path>` to isolate installer writes.
 
-If `/cost` is not available in an active Copilot CLI session after installing, run `/extensions` and enable `copilot-cli-cost` under **User**.
+The GitHub Copilot app discovers the installed user extension from `~/.copilot/extensions/copilot-cli-cost/` when it starts a session. If the **Session Cost** canvas is not available after installing or updating, start a new app session or restart/reload the app so the extension provider is launched with the new shim. In the interactive `copilot` CLI, use `/extensions` if you need to inspect or reload the user extension.
 
 When you run `copilot` inside this repository, Copilot CLI's extension resolver prefers the repo-local `.github/extensions/copilot-cli-cost` extension over the user-installed extension. The user-scoped shim intentionally stays pointed at the installed plugin copy for sessions outside the repository.
 
@@ -187,7 +187,9 @@ The generated statusline launcher is workspace-aware because statusline settings
 
 Use `/cost update` to force the extension to re-detect your current Copilot subscription and rewrite the shared cache used by the statusline. If the host exposes a statusline refresh hook, the command also requests an immediate refresh; otherwise the updated plan appears on the next normal statusline refresh.
 
-The panel opens a native window:
+The extension also registers a **Session Cost** canvas in the GitHub Copilot app. It uses the same installed extension shim as `/cost`, so no separate canvas install is required.
+
+The panel command opens a native window:
 
 ```text
 /cost panel on
